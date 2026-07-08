@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Heitje voor een karweitje",
+    "slug": "heitje-voor-een-karweitje",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#7C3AED"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.example.heitje",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Heitje uses the camera for before/after photos of chores.",
+        "NSPhotoLibraryUsageDescription": "Heitje uses your photo library for savings goal images."
+      }
+    },
+    "android": {
+      "package": "com.example.heitje",
+      "permissions": ["CAMERA"]
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Heitje uses the camera for before/after photos of chores.",
+          "photosPermission": "Heitje uses your photo library for savings goal images."
+        }
+      ]
+    ]
+  }
+}
