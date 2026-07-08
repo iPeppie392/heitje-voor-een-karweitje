@@ -50,8 +50,9 @@ De app is **Nederlands-eerst**. Engels en verdere talen (i18n) komen later.
 
 1. Ouder plaatst een klusje met titel, ruimte, emoji en bedrag → status `open`.
 2. Kind claimt het klusje → status `geclaimd`, gekoppeld aan dat kind.
-3. Kind maakt een **voor-foto** (alleen camera, geen galerij).
-4. Kind doet het klusje en maakt een **na-foto**.
+3. Kind doet het klusje. Foto's zijn **optioneel**: het kind mag een voor- en na-foto
+   (alleen camera, geen galerij) toevoegen als bewijs, of zonder foto afronden.
+4. Kind meldt het klusje klaar → status `wacht op goedkeuring`.
 5. Ouder beoordeelt:
    - ✅ **Goedkeuren** → kind kiest: **sparen** (naar doel) of **houden** (vrij saldo).
    - ❌ **Afkeuren** → altijd **met reden**; klusje gaat terug.

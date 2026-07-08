@@ -37,9 +37,11 @@ There is no test suite yet. Verify changes by running in Expo Go.
    Bijna! → GEHAALD! 🎉 — never percentages). Kids 12–18 = "teen" (progress ring WITH
    percentages). Everyone always sees real money amounts. Mode derives from `age` in
    `src/store.js` (parent override planned).
-3. **Chore flow**: open pool → kid claims → before-photo (camera only, no gallery) → work →
-   after-photo → parent approves (or rejects WITH a reason) → kid chooses: save (goal) or
-   keep (free balance) → feed post + confetti.
+3. **Chore flow**: open pool → kid claims → work → submit for approval → parent approves
+   (or rejects WITH a reason) → kid chooses: save (goal) or keep (free balance) → feed post
+   + confetti. **Photos are OPTIONAL**: the kid may add before/after photos (camera only, no
+   gallery) as proof, or finish without any photo at every stage. Feed posts without photos
+   show a "klus afgerond zonder foto" note instead of the photo pair.
 4. **Savings goals**: require parent approval before any shop link becomes tappable
    (this is the parental gate). Goal reached = confetti + feed post + parent alert.
 5. **Privacy**: no kid e-mail accounts, no tracking, no ads in kid views, photos stay in

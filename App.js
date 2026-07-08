@@ -69,6 +69,9 @@ export default function App() {
     if (uri) setChore(c.id, { status: "waiting", afterUri: uri });
   };
 
+  // Klaar melden zonder foto — foto's zijn optioneel geworden
+  const submitNoPhoto = (c) => setChore(c.id, { status: "waiting" });
+
   const approve = (c) => {
     boom();
     addFeed({ who: c.by, title: c.title, cents: c.cents, beforeUri: c.beforeUri, afterUri: c.afterUri });
@@ -186,10 +189,16 @@ export default function App() {
           {c.status === "open" && role === "ouder" &&
             <Text style={{ fontSize: 13, color: t.sub }}>Staat open in de pool</Text>}
           {c.status === "claimed" && (mine
-            ? <Btn t={t} jr={jr} small={!jr} onPress={() => photoBefore(c)}>{jr ? "📸 Foto vooraf!" : "📸 Voor-foto maken"}</Btn>
+            ? <View style={{ gap: 8 }}>
+                <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => submitNoPhoto(c)}>{jr ? "✅ Klaar! Laat kijken" : "✅ Klaar — vraag goedkeuring"}</Btn>
+                <Btn t={t} jr={jr} small={!jr} kind="ghost" onPress={() => photoBefore(c)}>📸 Foto's maken (mag ook)</Btn>
+              </View>
             : <Text style={{ fontSize: 13, color: t.sub }}>Geclaimd door {S.members[c.by]?.name}</Text>)}
           {c.status === "before" && (mine
-            ? <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => photoAfter(c)}>{jr ? "✅ Klaar! Foto erna" : "✅ Klaar — na-foto maken"}</Btn>
+            ? <View style={{ gap: 8 }}>
+                <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => photoAfter(c)}>{jr ? "📸 Klaar! Foto erna" : "📸 Klaar — na-foto maken"}</Btn>
+                <Btn t={t} jr={jr} small={!jr} kind="ghost" onPress={() => submitNoPhoto(c)}>Klaar zonder na-foto</Btn>
+              </View>
             : <Text style={{ fontSize: 13, color: t.sub }}>{S.members[c.by]?.name} is bezig</Text>)}
           {c.status === "waiting" && role === "kind" &&
             <Text style={{ fontSize: jr ? 14 : 13, color: t.sub }}>
@@ -203,7 +212,8 @@ export default function App() {
           {c.status === "rejected" && (mine && role === "kind"
             ? <View style={{ gap: 8 }}>
                 <Text style={{ fontSize: 13, color: t.danger, fontWeight: "700" }}>Afgekeurd: "{c.reason}"</Text>
-                <Btn t={t} jr={jr} small={!jr} onPress={() => photoAfter(c)}>{jr ? "📸 Nog een keer!" : "📸 Nieuwe na-foto"}</Btn>
+                <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => submitNoPhoto(c)}>{jr ? "✅ Opnieuw klaar!" : "✅ Opnieuw indienen"}</Btn>
+                <Btn t={t} jr={jr} small={!jr} kind="ghost" onPress={() => photoAfter(c)}>📸 Nieuwe na-foto</Btn>
               </View>
             : <Text style={{ fontSize: 13, color: t.sub }}>Afgekeurd: "{c.reason}"</Text>)}
         </View>
@@ -270,8 +280,49 @@ export default function App() {
   };
 
   // ----- Screens -----
-  const Feed = () => (
+  const Feed = () => {
+    const openCount = S.chores.filter(c => c.status === "open").length;
+    const Tile = ({ icon, value, label, onPress, hot }) => (
+      <Card t={t} onPress={onPress} style={{ flex: 1, paddingVertical: 16, alignItems: "flex-start" }}>
+        <Text style={{ fontSize: 20 }}>{icon}</Text>
+        <Text style={{ fontSize: 26, fontWeight: "900", color: hot ? t.accent : t.ink, marginTop: 6, letterSpacing: -0.5 }}>{value}</Text>
+        <Text style={{ fontSize: 12, fontWeight: "700", color: t.sub, marginTop: 1 }}>{label}</Text>
+      </Card>
+    );
+    return (
     <>
+      {/* Begroeting */}
+      <Card t={t} style={{ marginBottom: 12, backgroundColor: t.accent, borderColor: t.accent }}>
+        <Text style={{ color: "#fff", fontWeight: "900", fontSize: 23, letterSpacing: -0.5 }}>Hoi {M.name}! 👋</Text>
+        <Text style={{ color: "rgba(255,255,255,0.9)", fontSize: 13.5, marginTop: 6, lineHeight: 19 }}>
+          {role === "kind"
+            ? (jr ? "Er staan klusjes klaar. Pak ze en verdien zakgeld! 🙌"
+                  : `${openCount} ${openCount === 1 ? "klusje staat" : "klusjes staan"} in de pool. Claim ze snel!`)
+            : waiting.length ? `${waiting.length} ${waiting.length === 1 ? "klus wacht" : "klussen wachten"} op jouw goedkeuring.`
+                             : "Alles is goedgekeurd. Top! ✨"}</Text>
+      </Card>
+
+      {/* Stat-tegels */}
+      <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
+        <Tile icon="🧹" value={openCount} label="Open klusjes" onPress={() => setTab("klusjes")} hot={openCount > 0} />
+        {role === "ouder"
+          ? <Tile icon="⏳" value={waiting.length} label="Te keuren" onPress={() => setTab("klusjes")} hot={waiting.length > 0} />
+          : <Tile icon="🔥" value={M.streak} label="Dagen streak" />}
+      </View>
+
+      {/* Snelknop */}
+      {role === "kind" ? (
+        <View style={{ marginBottom: 14 }}>
+          <Btn t={t} jr={jr} onPress={() => setTab("klusjes")}>{jr ? "🙌 Pak een klusje!" : "🧹 Bekijk de klusjespool"}</Btn>
+        </View>
+      ) : (
+        <View style={{ marginBottom: 14 }}>
+          <Btn t={t} kind={waiting.length ? "success" : "ghost"} onPress={() => setTab("klusjes")}>
+            {waiting.length ? `✓ Keur ${waiting.length} ${waiting.length === 1 ? "klus" : "klussen"} goed` : "＋ Zet een klusje in de pool"}</Btn>
+        </View>
+      )}
+
+      {/* Eigen spaardoel (kind) */}
       {role === "kind" && myGoal ? (
         <Card t={t} onPress={() => setTab("sparen")} style={{ marginBottom: 14 }}>
           <Text style={{ fontSize: 12, fontWeight: "800", letterSpacing: 1, color: t.sub, marginBottom: 10 }}>
@@ -295,17 +346,29 @@ export default function App() {
         </Card>
       ) : null}
 
-      <Card t={t} style={{ marginBottom: 14, backgroundColor: t.accent, borderColor: t.accent }}>
-        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 16 }}>Hoi {M.name}! 👋</Text>
-        <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 13, marginTop: 4 }}>
-          {role === "kind"
-            ? (jr ? "Er staan klusjes klaar — pak ze! 🙌" : "De pool staat vol klusjes — claim ze snel!")
-            : waiting.length ? `${waiting.length} klus wacht op je goedkeuring` : "Alles is goedgekeurd ✨"}</Text>
+      {/* Gezinsstrip */}
+      <Card t={t} onPress={() => setTab("gezin")} style={{ marginBottom: 14 }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <Text style={{ fontSize: 12, fontWeight: "800", letterSpacing: 1, color: t.sub }}>HET GEZIN</Text>
+          <Text style={{ fontSize: 12, fontWeight: "700", color: t.accent }}>bekijk ▸</Text>
+        </View>
+        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+          {Object.entries(S.members).map(([k, m]) => (
+            <View key={k} style={{ alignItems: "center", flex: 1 }}>
+              <View style={{ width: 44, height: 44, borderRadius: 999, backgroundColor: t.soft, alignItems: "center", justifyContent: "center" }}>
+                <Text style={{ fontSize: 22 }}>{m.avatar}</Text></View>
+              <Text style={{ fontSize: 11.5, fontWeight: "700", color: t.ink, marginTop: 5 }} numberOfLines={1}>{m.name}</Text>
+              <Text style={{ fontSize: 11, fontWeight: "800", color: t.sub }}>{fmt(S.balances[k])}</Text>
+            </View>
+          ))}
+        </View>
       </Card>
 
+      {/* Activiteit */}
+      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>GEZINSACTIVITEIT</Text>
       {S.feed.length === 0 ? (
         <Card t={t}><Text style={{ textAlign: "center", color: t.sub, fontSize: 14, padding: 8 }}>
-          Nog geen posts — de eerste goedgekeurde klus verschijnt hier! 📸</Text></Card>
+          Nog niks gebeurd. Zodra iemand een klus afrondt, zie je het hier! 🎉</Text></Card>
       ) : S.feed.map(p => {
         const m = S.members[p.who];
         return (
@@ -326,10 +389,17 @@ export default function App() {
             ) : (
               <>
                 <Text style={{ marginTop: 12, fontWeight: "700", fontSize: 15, color: t.ink }}>{p.title}</Text>
-                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                  <PhotoBox t={t} uri={p.beforeUri} label="VOOR" />
-                  <PhotoBox t={t} uri={p.afterUri} label="NA" />
-                </View>
+                {(p.beforeUri || p.afterUri) ? (
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                    <PhotoBox t={t} uri={p.beforeUri} label="VOOR" />
+                    <PhotoBox t={t} uri={p.afterUri} label="NA" />
+                  </View>
+                ) : (
+                  <View style={{ marginTop: 10, flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: t.soft, borderRadius: 14, padding: 12 }}>
+                    <Text style={{ fontSize: 20 }}>✅</Text>
+                    <Text style={{ fontSize: 13, color: t.sub, fontWeight: "700" }}>Klus afgerond zonder foto</Text>
+                  </View>
+                )}
               </>
             )}
             <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
@@ -346,7 +416,8 @@ export default function App() {
       <Text style={{ textAlign: "center", color: t.sub, fontSize: 12, padding: 14 }}>
         Alleen echt gezinsnieuws — geen algoritme. 💜</Text>
     </>
-  );
+    );
+  };
 
   const Chores = () => (
     <>
@@ -466,16 +537,20 @@ export default function App() {
       <StatusBar style={scheme === "dark" ? "light" : "dark"} />
       <Confetti show={confetti} />
 
-      {/* Header */}
-      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingVertical: 10, gap: 10 }}>
-        <TouchableOpacity onPress={() => setMe(null)}>
-          <Text style={{ fontSize: 22, fontWeight: "800", color: t.ink, letterSpacing: -0.5 }}>
+      {/* Header — prominent logo + profielwissel */}
+      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingTop: 10, paddingBottom: 12, gap: 10 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 32, fontWeight: "900", color: t.ink, letterSpacing: -1.5 }}>
             Heit<Text style={{ color: t.accent }}>je</Text></Text>
-          <Text style={{ fontSize: 10, fontWeight: "700", color: t.sub }}>voor een karweitje · {M.avatar} {M.name} ▾</Text>
-        </TouchableOpacity>
-        <View style={{ flex: 1 }} />
-        <Chip t={t} color={t.amber}>🔥 {M.streak}</Chip>
+          <Text style={{ fontSize: 12.5, fontWeight: "800", color: t.accent, letterSpacing: 0.2, marginTop: -3 }}>
+            voor een karweitje</Text>
+        </View>
         <Chip t={t} big>💰 {fmt(S.balances[me])}</Chip>
+        <TouchableOpacity onPress={() => setMe(null)} style={{ flexDirection: "row", alignItems: "center", gap: 6,
+          backgroundColor: t.soft, borderWidth: 1, borderColor: t.line, borderRadius: 999, paddingLeft: 8, paddingRight: 11, paddingVertical: 6 }}>
+          <Text style={{ fontSize: 18 }}>{M.avatar}</Text>
+          <Text style={{ fontSize: 12.5, fontWeight: "800", color: t.ink }}>{M.name} ▾</Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
