@@ -18,7 +18,8 @@ export const DEFAULT_STATE = {
   balances: { emma: 0, daan: 0, wouter: 0, mama: 0 },
   chores: [
     { id: 1, title: "Vaatwasser uitruimen", room: "Keuken", emoji: "🍽️", cents: 150, status: "open", by: null },
-    { id: 2, title: "Badkamer schoonmaken", room: "Badkamer", emoji: "🛁", cents: 400, status: "open", by: null },
+    { id: 2, title: "Badkamer schoonmaken", room: "Badkamer", emoji: "🛁", cents: 400, status: "open", by: null,
+      conditions: { note: "Vergeet de kranen en de spiegel niet.", checklist: ["Wastafel schoon", "Spiegel gepoetst", "Vloer gedweild"], photoRequired: true, deadline: "voor 18:00" } },
     { id: 3, title: "Stofzuigen beneden", room: "Woonkamer", emoji: "🧹", cents: 250, status: "open", by: null },
   ],
   goals: {

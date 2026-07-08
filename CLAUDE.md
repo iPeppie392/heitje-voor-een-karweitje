@@ -42,6 +42,11 @@ There is no test suite yet. Verify changes by running in Expo Go.
    + confetti. **Photos are OPTIONAL**: the kid may add before/after photos (camera only, no
    gallery) as proof, or finish without any photo at every stage. Feed posts without photos
    show a "klus afgerond zonder foto" note instead of the photo pair.
+   **Conditions (voorwaarden)**: a parent can attach optional `conditions` to a chore when
+   creating it: `{ note, checklist[], photoRequired, deadline }`. The kid must tick every
+   checklist item before the "klaar" button appears (enforced, stored in `chore.checked`),
+   and if `photoRequired` the no-photo path is hidden. `deadline` is shown as info (not
+   auto-enforced). Parents also see the conditions read-only when approving.
 4. **Savings goals**: require parent approval before any shop link becomes tappable
    (this is the parental gate). Goal reached = confetti + feed post + parent alert.
 5. **Privacy**: no kid e-mail accounts, no tracking, no ads in kid views, photos stay in

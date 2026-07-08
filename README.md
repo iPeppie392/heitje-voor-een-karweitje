@@ -101,6 +101,7 @@ flowchart LR
 | 🗂️ | **Open klusjespot** | Ouders zetten klusjes met een bedrag klaar. Kinderen claimen ze, wie eerst komt. |
 | 📸 | **Foto-bewijs (optioneel)** | Kind mag voor- en na-foto's met de camera toevoegen als bewijs, of het klusje zonder foto afronden. Ouder keurt goed of af (met reden). |
 | 🏠 | **Home page voor iedereen** | De feed is een echte startpagina: begroeting, tegels met open klusjes en te keuren, snelknop, gezinsstrip en de gezinsactiviteit. |
+| 📋 | **Voorwaarden per klus** | Ouder stelt eisen in: instructie, checklist (afvinken), foto verplicht, deadline. Het kind moet alle punten afvinken voordat het "klaar" kan melden. |
 | 💶 | **Echt geld, geen echte betaling** | Saldo in de gezinsvaluta (€/£/$). Ouder betaalt fysiek uit en boekt het in de app. |
 | 🐷 | **Digitale spaarpot** | Spaardoel met foto en streefbedrag. Per klusje kiest het kind: sparen of houden. |
 | 🧒 | **Leeftijd-slimme app** | Junioren (<12) krijgen grote knoppen, meer emoji en een motivatiebalk. Tieners (12–18) een voortgangsring met percentages. Iedereen ziet echt geld. |

@@ -86,7 +86,7 @@ met `DEFAULT_STATE` (zie `src/store.js`).
 |---|---|
 | `members` | Gezinsleden: naam, avatar (emoji), leeftijd, rol (`kind`/`ouder`), streak, kleur |
 | `balances` | Vrij saldo per lid, in **centen** |
-| `chores` | Klusjes: id, titel, ruimte, emoji, `cents`, `status`, en door wie geclaimd |
+| `chores` | Klusjes: id, titel, ruimte, emoji, `cents`, `status`, door wie geclaimd, optionele `conditions` ({note, checklist[], photoRequired, deadline}) en `checked[]` (afvink-stand) |
 | `goals` | Spaardoel per kind: naam, emoji, foto, `target`, `saved`, winkellink, `approved` |
 | `feed` | Chronologische posts (goedgekeurde klusjes, behaalde doelen) |
 

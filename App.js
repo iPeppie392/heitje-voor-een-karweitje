@@ -57,7 +57,12 @@ export default function App() {
   // ----- Chore flow -----
   const setChore = (id, up) => setS(s => ({ ...s, chores: s.chores.map(c => c.id === id ? { ...c, ...up } : c) }));
 
-  const claim = (c) => setChore(c.id, { status: "claimed", by: me });
+  // Voorwaarden: checklist afvinken en of alles klaar is
+  const condChecklist = (c) => c.conditions?.checklist || [];
+  const allChecked = (c) => condChecklist(c).every((_, i) => !!c.checked?.[i]);
+  const toggleCheck = (c, i) => setChore(c.id, { checked: condChecklist(c).map((_, j) => j === i ? !(c.checked?.[i]) : !!c.checked?.[j]) });
+
+  const claim = (c) => setChore(c.id, { status: "claimed", by: me, checked: condChecklist(c).map(() => false) });
 
   const photoBefore = async (c) => {
     const uri = await takePhoto();
@@ -163,6 +168,9 @@ export default function App() {
   // ----- Chore card -----
   const ChoreCard = ({ c }) => {
     const mine = c.by === me;
+    const cd = c.conditions;
+    const interactive = mine && (c.status === "claimed" || c.status === "before" || c.status === "rejected");
+    const canFinish = allChecked(c);
     return (
       <Card t={t} style={{ marginBottom: 12 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
@@ -183,22 +191,53 @@ export default function App() {
           </View>
         ) : null}
 
+        {cd ? (
+          <View style={{ marginTop: 10, backgroundColor: t.soft, borderRadius: 14, padding: 12, gap: 8 }}>
+            <Text style={{ fontSize: 11, fontWeight: "800", letterSpacing: 0.5, color: t.sub }}>VOORWAARDEN VAN PAPA/MAMA</Text>
+            {cd.note ? <Text style={{ fontSize: 13, color: t.ink }}>📝 {cd.note}</Text> : null}
+            {cd.deadline ? <Text style={{ fontSize: 13, color: t.ink, fontWeight: "700" }}>⏰ Klaar voor: {cd.deadline}</Text> : null}
+            {cd.photoRequired ? <Text style={{ fontSize: 13, color: t.ink }}>📸 Foto verplicht bij deze klus</Text> : null}
+            {cd.checklist?.length ? cd.checklist.map((item, i) => {
+              const on = !!c.checked?.[i];
+              const inner = (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 9 }}>
+                  <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2,
+                    borderColor: on ? t.green : t.line, backgroundColor: on ? t.green : "transparent",
+                    alignItems: "center", justifyContent: "center" }}>
+                    {on ? <Text style={{ color: "#fff", fontSize: 13, fontWeight: "900" }}>✓</Text> : null}
+                  </View>
+                  <Text style={{ flex: 1, fontSize: 13, color: t.ink, textDecorationLine: on ? "line-through" : "none" }}>{item}</Text>
+                </View>
+              );
+              return interactive
+                ? <TouchableOpacity key={i} onPress={() => toggleCheck(c, i)}>{inner}</TouchableOpacity>
+                : <View key={i}>{inner}</View>;
+            }) : null}
+          </View>
+        ) : null}
+
         <View style={{ marginTop: 10 }}>
           {c.status === "open" && role === "kind" &&
             <Btn t={t} jr={jr} small={!jr} onPress={() => claim(c)}>{jr ? "Pak 'm! 🙌" : "Claimen"}</Btn>}
           {c.status === "open" && role === "ouder" &&
             <Text style={{ fontSize: 13, color: t.sub }}>Staat open in de pool</Text>}
           {c.status === "claimed" && (mine
-            ? <View style={{ gap: 8 }}>
-                <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => submitNoPhoto(c)}>{jr ? "✅ Klaar! Laat kijken" : "✅ Klaar — vraag goedkeuring"}</Btn>
-                <Btn t={t} jr={jr} small={!jr} kind="ghost" onPress={() => photoBefore(c)}>📸 Foto's maken (mag ook)</Btn>
-              </View>
+            ? (!canFinish
+                ? <Text style={{ fontSize: 13, color: t.sub, fontWeight: "700" }}>Vink eerst alle punten hierboven af ✔️</Text>
+                : cd?.photoRequired
+                  ? <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => photoAfter(c)}>{jr ? "📸 Maak foto & klaar!" : "📸 Maak foto & rond af"}</Btn>
+                  : <View style={{ gap: 8 }}>
+                      <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => submitNoPhoto(c)}>{jr ? "✅ Klaar! Laat kijken" : "✅ Klaar — vraag goedkeuring"}</Btn>
+                      <Btn t={t} jr={jr} small={!jr} kind="ghost" onPress={() => photoBefore(c)}>📸 Foto's maken (mag ook)</Btn>
+                    </View>)
             : <Text style={{ fontSize: 13, color: t.sub }}>Geclaimd door {S.members[c.by]?.name}</Text>)}
           {c.status === "before" && (mine
-            ? <View style={{ gap: 8 }}>
-                <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => photoAfter(c)}>{jr ? "📸 Klaar! Foto erna" : "📸 Klaar — na-foto maken"}</Btn>
-                <Btn t={t} jr={jr} small={!jr} kind="ghost" onPress={() => submitNoPhoto(c)}>Klaar zonder na-foto</Btn>
-              </View>
+            ? (!canFinish
+                ? <Text style={{ fontSize: 13, color: t.sub, fontWeight: "700" }}>Vink eerst alle punten hierboven af ✔️</Text>
+                : <View style={{ gap: 8 }}>
+                    <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => photoAfter(c)}>{jr ? "📸 Klaar! Foto erna" : "📸 Klaar — na-foto maken"}</Btn>
+                    {!cd?.photoRequired ? <Btn t={t} jr={jr} small={!jr} kind="ghost" onPress={() => submitNoPhoto(c)}>Klaar zonder na-foto</Btn> : null}
+                  </View>)
             : <Text style={{ fontSize: 13, color: t.sub }}>{S.members[c.by]?.name} is bezig</Text>)}
           {c.status === "waiting" && role === "kind" &&
             <Text style={{ fontSize: jr ? 14 : 13, color: t.sub }}>
@@ -212,8 +251,14 @@ export default function App() {
           {c.status === "rejected" && (mine && role === "kind"
             ? <View style={{ gap: 8 }}>
                 <Text style={{ fontSize: 13, color: t.danger, fontWeight: "700" }}>Afgekeurd: "{c.reason}"</Text>
-                <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => submitNoPhoto(c)}>{jr ? "✅ Opnieuw klaar!" : "✅ Opnieuw indienen"}</Btn>
-                <Btn t={t} jr={jr} small={!jr} kind="ghost" onPress={() => photoAfter(c)}>📸 Nieuwe na-foto</Btn>
+                {!canFinish
+                  ? <Text style={{ fontSize: 13, color: t.sub, fontWeight: "700" }}>Vink eerst alle punten hierboven af ✔️</Text>
+                  : cd?.photoRequired
+                    ? <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => photoAfter(c)}>📸 Foto & opnieuw indienen</Btn>
+                    : <>
+                        <Btn t={t} jr={jr} small={!jr} kind="success" onPress={() => submitNoPhoto(c)}>{jr ? "✅ Opnieuw klaar!" : "✅ Opnieuw indienen"}</Btn>
+                        <Btn t={t} jr={jr} small={!jr} kind="ghost" onPress={() => photoAfter(c)}>📸 Nieuwe na-foto</Btn>
+                      </>}
               </View>
             : <Text style={{ fontSize: 13, color: t.sub }}>Afgekeurd: "{c.reason}"</Text>)}
         </View>
@@ -630,11 +675,19 @@ function AddChoreModal({ t, visible, onClose, onAdd }) {
   const [title, setTitle] = useState("");
   const [room, setRoom] = useState("");
   const [euros, setEuros] = useState("");
+  const [note, setNote] = useState("");
+  const [checklistText, setChecklistText] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const [photoReq, setPhotoReq] = useState(false);
   const submit = () => {
     const cents = Math.round(parseFloat(euros.replace(",", ".")) * 100);
     if (!title.trim() || !cents || cents <= 0) { Alert.alert("Vul een titel en een geldig bedrag in"); return; }
-    onAdd({ id: Date.now(), title: title.trim(), room: room.trim() || "Huis", emoji: "🧽", cents, status: "open", by: null });
-    setTitle(""); setRoom(""); setEuros("");
+    const checklist = checklistText.split("\n").map(s => s.trim()).filter(Boolean);
+    const conditions = (note.trim() || checklist.length || photoReq || deadline.trim())
+      ? { note: note.trim(), checklist, photoRequired: photoReq, deadline: deadline.trim() }
+      : null;
+    onAdd({ id: Date.now(), title: title.trim(), room: room.trim() || "Huis", emoji: "🧽", cents, status: "open", by: null, conditions });
+    setTitle(""); setRoom(""); setEuros(""); setNote(""); setChecklistText(""); setDeadline(""); setPhotoReq(false);
   };
   return (
     <Sheet t={t} visible={visible} onClose={onClose} title="＋ Nieuw klusje">
@@ -644,6 +697,23 @@ function AddChoreModal({ t, visible, onClose, onAdd }) {
         value={room} onChangeText={setRoom} />
       <TextInput style={inputStyle(t)} placeholder="Bedrag (bijv. 1,50)" placeholderTextColor={t.sub}
         keyboardType="decimal-pad" value={euros} onChangeText={setEuros} />
+
+      <Text style={{ fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: t.sub, marginTop: 4, marginBottom: 8 }}>VOORWAARDEN (optioneel)</Text>
+      <TextInput style={inputStyle(t)} placeholder="Instructie (bijv. Vergeet de hoekjes niet)" placeholderTextColor={t.sub}
+        value={note} onChangeText={setNote} />
+      <TextInput style={[inputStyle(t), { height: 92, textAlignVertical: "top" }]} multiline
+        placeholder={"Checklist — één punt per regel (bijv. Tafel afnemen / Stoelen recht / Vloer vegen)"} placeholderTextColor={t.sub}
+        value={checklistText} onChangeText={setChecklistText} />
+      <TextInput style={inputStyle(t)} placeholder="Deadline (bijv. voor 18:00 of vandaag)" placeholderTextColor={t.sub}
+        value={deadline} onChangeText={setDeadline} />
+      <TouchableOpacity onPress={() => setPhotoReq(v => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: photoReq ? t.accent : t.line,
+          backgroundColor: photoReq ? t.accent : "transparent", alignItems: "center", justifyContent: "center" }}>
+          {photoReq ? <Text style={{ color: "#fff", fontSize: 14, fontWeight: "900" }}>✓</Text> : null}
+        </View>
+        <Text style={{ fontSize: 14, color: t.ink, fontWeight: "700" }}>📸 Foto verplicht bij deze klus</Text>
+      </TouchableOpacity>
+
       <Btn t={t} onPress={submit}>In de pool zetten</Btn>
     </Sheet>
   );
