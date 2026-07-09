@@ -348,22 +348,120 @@ export default function App() {
     );
   };
 
-  // ----- Screens -----
+  // ----- Home / dashboard (het pronkstuk) -----
   const Feed = () => {
     const openCount = S.chores.filter(c => c.status === "open").length;
+    const totalSaved = Object.values(S.goals).reduce((a, g) => a + (g?.saved || 0), 0);
+    const doneCount = S.feed.filter(p => !p.badge).length;
+    const topSaverKey = Object.entries(S.balances).sort((a, b) => b[1] - a[1])[0]?.[0];
+    const activeChoreOf = (k) => S.chores.find(c => c.by === k && c.status !== "open");
+    const ordered = Object.entries(S.members).slice()
+      .sort((a, b) => (a[0] === me ? -1 : b[0] === me ? 1 : 0) || (S.balances[b[0]] - S.balances[a[0]]));
+
     const Tile = ({ icon, value, label, onPress, hot }) => (
-      <Card t={t} onPress={onPress} style={{ flex: 1, paddingVertical: 16, alignItems: "flex-start" }}>
-        <Text style={{ fontSize: 20 }}>{icon}</Text>
-        <Text style={{ fontSize: 26, fontWeight: "900", color: hot ? t.accent : t.ink, marginTop: 6, letterSpacing: -0.5 }}>{value}</Text>
-        <Text style={{ fontSize: 12, fontWeight: "700", color: t.sub, marginTop: 1 }}>{label}</Text>
+      <Card t={t} onPress={onPress} style={{ flex: 1, paddingVertical: 15, alignItems: "flex-start" }}>
+        <Text style={{ fontSize: 19 }}>{icon}</Text>
+        <Text style={{ fontSize: 23, fontWeight: "900", color: hot ? t.accent : t.ink, marginTop: 5, letterSpacing: -0.5 }}>{value}</Text>
+        <Text style={{ fontSize: 11.5, fontWeight: "700", color: t.sub, marginTop: 1 }}>{label}</Text>
       </Card>
     );
+
+    const Shortcut = ({ icon, label, onPress }) => (
+      <TouchableOpacity onPress={onPress} style={{ width: 72, alignItems: "center", gap: 6 }}>
+        <View style={{ width: 56, height: 56, borderRadius: 18, backgroundColor: t.soft,
+          borderWidth: 1, borderColor: t.line, alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ fontSize: 24 }}>{icon}</Text>
+        </View>
+        <Text style={{ fontSize: 11, fontWeight: "700", color: t.sub, textAlign: "center" }} numberOfLines={1}>{label}</Text>
+      </TouchableOpacity>
+    );
+
+    const shortcuts = role === "kind"
+      ? [
+          { icon: "🧹", label: "Klusjes", on: () => setTab("klusjes") },
+          { icon: "🐷", label: "Sparen", on: () => setTab("sparen") },
+          { icon: "👨‍👩‍👧", label: "Gezin", on: () => setTab("gezin") },
+          { icon: "🔄", label: "Wissel", on: () => setMe(null) },
+        ]
+      : [
+          { icon: "➕", label: "Nieuw klus", on: () => { if (active.length >= FREE_CHORE_LIMIT) { Alert.alert("Premium ✨", `Gratis: max ${FREE_CHORE_LIMIT} actieve klusjes.`); } else setChoreModal(true); } },
+          { icon: "✅", label: "Keuren", on: () => setTab("klusjes") },
+          { icon: "💶", label: "Uitbetalen", on: () => setTab("gezin") },
+          { icon: "🐷", label: "Sparen", on: () => setTab("sparen") },
+          { icon: "👨‍👩‍👧", label: "Gezin", on: () => setTab("gezin") },
+          { icon: "🔄", label: "Wissel", on: () => setMe(null) },
+        ];
+
+    const MemberCard = ({ k, m }) => {
+      const bal = S.balances[k];
+      const g = m.role === "kind" ? S.goals[k] : null;
+      const active = activeChoreOf(k);
+      const isMe = k === me;
+      const statusText = active ? ({ claimed: "is bezig", before: "is bezig 📸",
+        waiting: "wacht op goedkeuring ⏳", rejected: "doet klus opnieuw" }[active.status]) : null;
+      return (
+        <Card t={t} onPress={() => setTab("gezin")} style={{ marginBottom: 10, borderLeftWidth: 4, borderLeftColor: m.color }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <View style={{ width: 48, height: 48, borderRadius: 999, backgroundColor: m.color + "22",
+              borderWidth: 2, borderColor: m.color, alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ fontSize: 24 }}>{m.avatar}</Text></View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: "800", fontSize: 16, color: t.ink }}>
+                {m.name}{isMe ? " · jij" : ""}{k === topSaverKey && bal > 0 ? " 👑" : ""}</Text>
+              <Text style={{ fontSize: 12, color: t.sub }}>
+                {m.role === "kind" ? `Kind · ${m.age} jr` : "Ouder"} · 🔥 {m.streak}</Text>
+            </View>
+            <Amount t={t} size={20}>{fmt(bal)}</Amount>
+          </View>
+          {g ? (
+            <View style={{ marginTop: 10 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 4 }}>
+                <Text style={{ fontSize: 12, color: t.sub, fontWeight: "700" }} numberOfLines={1}>{g.emoji} {g.name}</Text>
+                <Text style={{ fontSize: 12, color: t.sub, fontWeight: "800" }}>{fmt(g.saved)} / {fmt(g.target)}</Text>
+              </View>
+              <View style={{ height: 8, borderRadius: 999, backgroundColor: t.soft }}>
+                <View style={{ width: `${Math.min(100, (g.saved / g.target) * 100)}%`, height: "100%", borderRadius: 999, backgroundColor: m.color }} />
+              </View>
+              {!g.approved ? <Text style={{ fontSize: 11, color: t.amber, fontWeight: "700", marginTop: 4 }}>⏳ doel wacht op goedkeuring</Text> : null}
+            </View>
+          ) : null}
+          {active ? (
+            <View style={{ marginTop: 10, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: t.soft, borderRadius: 12, padding: 10 }}>
+              <Text style={{ fontSize: 16 }}>{active.emoji || "🧽"}</Text>
+              <Text style={{ flex: 1, fontSize: 12.5, color: t.ink }}>
+                <Text style={{ fontWeight: "800" }}>{active.title}</Text> — {statusText}</Text>
+              <Amount t={t} size={15}>{fmt(active.cents)}</Amount>
+            </View>
+          ) : null}
+        </Card>
+      );
+    };
+
     return (
     <>
-      {/* Begroeting */}
-      <Card t={t} style={{ marginBottom: 12, backgroundColor: t.accent, borderColor: t.accent }}>
-        <Text style={{ color: "#fff", fontWeight: "900", fontSize: 23, letterSpacing: -0.5 }}>Hoi {M.name}! 👋</Text>
-        <Text style={{ color: "rgba(255,255,255,0.9)", fontSize: 13.5, marginTop: 6, lineHeight: 19 }}>
+      {/* HERO — saldo + begroeting */}
+      <Card t={t} style={{ marginBottom: 14, backgroundColor: t.accent, borderColor: t.accent, padding: 20 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <View style={{ width: 52, height: 52, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.22)", alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ fontSize: 28 }}>{M.avatar}</Text></View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 22, letterSpacing: -0.5 }}>Hoi {M.name}! 👋</Text>
+            <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 12.5, fontWeight: "700" }}>🔥 {M.streak} dagen streak</Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: 16 }}>
+          <View>
+            <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: "800", letterSpacing: 0.5 }}>MIJN SALDO</Text>
+            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 40, letterSpacing: -1.5, marginTop: 2 }}>{fmt(S.balances[me])}</Text>
+          </View>
+          {role === "kind" && myGoal ? (
+            <View style={{ alignItems: "flex-end" }}>
+              <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 11, fontWeight: "800" }}>SPAARDOEL</Text>
+              <Text style={{ color: "#fff", fontSize: 14, fontWeight: "800" }}>{Math.round((myGoal.saved / myGoal.target) * 100)}% 🐷</Text>
+            </View>
+          ) : null}
+        </View>
+        <Text style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, marginTop: 12, lineHeight: 18 }}>
           {role === "kind"
             ? (jr ? "Er staan klusjes klaar. Pak ze en verdien zakgeld! 🙌"
                   : `${openCount} ${openCount === 1 ? "klusje staat" : "klusjes staan"} in de pool. Claim ze snel!`)
@@ -371,54 +469,30 @@ export default function App() {
                              : "Alles is goedgekeurd. Top! ✨"}</Text>
       </Card>
 
-      {/* Stat-tegels */}
-      <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
+      {/* SNELKOPPELINGEN */}
+      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>SNELKOPPELINGEN</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingBottom: 4 }} style={{ marginBottom: 14 }}>
+        {shortcuts.map((s, i) => <Shortcut key={i} icon={s.icon} label={s.label} onPress={s.on} />)}
+      </ScrollView>
+
+      {/* FAMILIE-STATS */}
+      <View style={{ flexDirection: "row", gap: 10, marginBottom: 16 }}>
         <Tile icon="🧹" value={openCount} label="Open klusjes" onPress={() => setTab("klusjes")} hot={openCount > 0} />
         {role === "ouder"
           ? <Tile icon="⏳" value={waiting.length} label="Te keuren" onPress={() => setTab("klusjes")} hot={waiting.length > 0} />
-          : <Tile icon="🔥" value={M.streak} label="Dagen streak" />}
+          : <Tile icon="🔥" value={M.streak} label="Streak" />}
+        <Tile icon="🐷" value={fmt(totalSaved)} label="Samen gespaard" onPress={() => setTab("sparen")} />
       </View>
 
-      {/* Snelknop */}
-      {role === "kind" ? (
-        <View style={{ marginBottom: 14 }}>
-          <Btn t={t} jr={jr} onPress={() => setTab("klusjes")}>{jr ? "🙌 Pak een klusje!" : "🧹 Bekijk de klusjespool"}</Btn>
-        </View>
-      ) : (
-        <View style={{ marginBottom: 14 }}>
-          <Btn t={t} kind={waiting.length ? "success" : "ghost"} onPress={() => setTab("klusjes")}>
-            {waiting.length ? `✓ Keur ${waiting.length} ${waiting.length === 1 ? "klus" : "klussen"} goed` : "＋ Zet een klusje in de pool"}</Btn>
-        </View>
-      )}
-
-      {/* Eigen spaardoel (kind) */}
-      {role === "kind" && myGoal ? (
-        <Card t={t} onPress={() => setTab("sparen")} style={{ marginBottom: 14 }}>
-          <Text style={{ fontSize: 12, fontWeight: "800", letterSpacing: 1, color: t.sub, marginBottom: 10 }}>
-            MIJN SPAARDOEL 🐷 {jr ? "" : `· ${myGoal.name}`}</Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
-            <Progress pct={myGoal.saved / myGoal.target} uri={myGoal.imageUri} emoji={myGoal.emoji} />
-            {!jr ? (
-              <View style={{ flex: 1 }}>
-                <Amount t={t} size={32}>{fmt(myGoal.saved)}</Amount>
-                <Text style={{ fontSize: 14, color: t.sub, fontWeight: "700" }}>
-                  van {fmt(myGoal.target)} · {myGoal.saved >= myGoal.target ? "GEHAALD! 🎉" : `nog ${fmt(myGoal.target - myGoal.saved)}`}</Text>
-              </View>
-            ) : null}
-          </View>
-          {jr ? (
-            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8, marginTop: 10 }}>
-              <Amount t={t} size={34}>{fmt(myGoal.saved)}</Amount>
-              <Text style={{ fontSize: 15, color: t.sub, fontWeight: "800" }}>gespaard! 🐷</Text>
-            </View>
-          ) : null}
-        </Card>
-      ) : null}
+      {/* IEDEREEN IN HET GEZIN */}
+      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>IEDEREEN IN HET GEZIN</Text>
+      {ordered.map(([k, m]) => <MemberCard key={k} k={k} m={m} />)}
+      <View style={{ height: 4 }} />
 
       {/* Mijn klusjes (kind) — direct af te ronden vanaf de home */}
       {role === "kind" && S.chores.some(c => c.by === me && c.status !== "open") ? (
         <>
-          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>MIJN KLUSJES</Text>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10, marginTop: 6 }}>MIJN KLUSJES</Text>
           {S.chores.filter(c => c.by === me && c.status !== "open").map(c => <ChoreCard key={c.id} c={c} />)}
         </>
       ) : null}
@@ -426,31 +500,27 @@ export default function App() {
       {/* Te keuren (ouder) — direct goedkeuren vanaf de home */}
       {role === "ouder" && waiting.length ? (
         <>
-          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>TE KEUREN</Text>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10, marginTop: 6 }}>TE KEUREN</Text>
           {waiting.map(c => <ChoreCard key={c.id} c={c} />)}
         </>
       ) : null}
 
-      {/* Gezinsstrip */}
-      <Card t={t} onPress={() => setTab("gezin")} style={{ marginBottom: 14 }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <Text style={{ fontSize: 12, fontWeight: "800", letterSpacing: 1, color: t.sub }}>HET GEZIN</Text>
-          <Text style={{ fontSize: 12, fontWeight: "700", color: t.accent }}>bekijk ▸</Text>
-        </View>
-        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-          {Object.entries(S.members).map(([k, m]) => (
-            <View key={k} style={{ alignItems: "center", flex: 1 }}>
-              <View style={{ width: 44, height: 44, borderRadius: 999, backgroundColor: t.soft, alignItems: "center", justifyContent: "center" }}>
-                <Text style={{ fontSize: 22 }}>{m.avatar}</Text></View>
-              <Text style={{ fontSize: 11.5, fontWeight: "700", color: t.ink, marginTop: 5 }} numberOfLines={1}>{m.name}</Text>
-              <Text style={{ fontSize: 11, fontWeight: "800", color: t.sub }}>{fmt(S.balances[k])}</Text>
-            </View>
-          ))}
-        </View>
-      </Card>
+      {/* Eigen spaardoel groot (kind) */}
+      {role === "kind" && myGoal ? (
+        <>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10, marginTop: 6 }}>MIJN SPAARDOEL</Text>
+          <Card t={t} onPress={() => setTab("sparen")} style={{ marginBottom: 14, alignItems: "center", padding: 22 }}>
+            <Progress pct={myGoal.saved / myGoal.target} uri={myGoal.imageUri} emoji={myGoal.emoji} big />
+            <Text style={{ fontWeight: "800", fontSize: jr ? 19 : 17, color: t.ink, marginTop: 14 }}>{myGoal.name}</Text>
+            <Amount t={t} size={jr ? 40 : 36}>{fmt(myGoal.saved)}</Amount>
+            <Text style={{ fontSize: 14, fontWeight: "700", color: t.sub, marginTop: 2 }}>
+              van {fmt(myGoal.target)}{myGoal.saved < myGoal.target ? ` · nog ${fmt(myGoal.target - myGoal.saved)}` : " · GEHAALD! 🎉"}</Text>
+          </Card>
+        </>
+      ) : null}
 
       {/* Activiteit */}
-      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>GEZINSACTIVITEIT</Text>
+      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10, marginTop: 6 }}>GEZINSACTIVITEIT</Text>
       {S.feed.length === 0 ? (
         <Card t={t}><Text style={{ textAlign: "center", color: t.sub, fontSize: 14, padding: 8 }}>
           Nog niks gebeurd. Zodra iemand een klus afrondt, zie je het hier! 🎉</Text></Card>
