@@ -26,6 +26,18 @@ There is no test suite yet. Verify changes by running in Expo Go.
 - `src/theme.js` — design tokens + `fmt()` currency formatting
 - `src/store.js` — seed data (demo family) + AsyncStorage persistence
 - `src/components.js` — Card, Btn, Chip, Ring, JuniorBar, PhotoBox, Confetti
+- `assets/` — app-icoon (`icon.png`), Android adaptive (`adaptive-icon.png`), splash (`splash-icon.png`)
+- `public/` — statische juridische pagina's (`privacy.html`, `voorwaarden.html`), meegekopieerd naar de web-build
+
+## App store / store-readiness
+
+- App-ID (bundle/package) = `nl.heitje.karweitje` (het oude `com.example.*` werd geweigerd).
+- Icoon + splash staan in `assets/` (violet, bezem 🧹). Vervang gerust door eigen ontwerp.
+- Privacybeleid + voorwaarden staan online via de web-build: `/privacy.html` en `/voorwaarden.html`;
+  in de app gelinkt vanuit het Gezin-scherm (`LEGAL_BASE` in `App.js`).
+- Kinderbescherming geldt app-breed (kinderen onder 12 gebruiken de app): geen tracking, geen
+  advertenties bij kinderen, ouderlijke poort. UI verschilt per leeftijd (junior <12 / tiener 12–18).
+- Native builds naar de stores vereisen EAS Build + betaalde developer-accounts (nog niet gedaan).
 
 ## Product rules (do not break these)
 

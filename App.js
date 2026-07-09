@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity, Modal, TextInput, Alert,
-  SafeAreaView, useColorScheme, KeyboardAvoidingView, Platform,
+  SafeAreaView, useColorScheme, KeyboardAvoidingView, Platform, Linking,
 } from "react-native";
+
+const LEGAL_BASE = "https://heitje-voor-een-karweitje-five.vercel.app";
 import { StatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
 import { light, dark, fmt as fmt0 } from "./src/theme";
@@ -565,6 +567,14 @@ export default function App() {
             { text: "Annuleren", style: "cancel" },
             { text: "Wissen", style: "destructive", onPress: async () => { await resetState(); setS(DEFAULT_STATE); setMe(null); } },
           ])}>Demo-data resetten</Btn>
+        <View style={{ flexDirection: "row", gap: 18, marginTop: 14 }}>
+          <TouchableOpacity onPress={() => Linking.openURL(`${LEGAL_BASE}/privacy.html`)}>
+            <Text style={{ color: t.accent, fontWeight: "700", fontSize: 13 }}>Privacybeleid ↗</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => Linking.openURL(`${LEGAL_BASE}/voorwaarden.html`)}>
+            <Text style={{ color: t.accent, fontWeight: "700", fontSize: 13 }}>Gebruiksvoorwaarden ↗</Text>
+          </TouchableOpacity>
+        </View>
       </Card>
     </>
   );

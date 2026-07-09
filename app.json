@@ -6,20 +6,31 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "primaryColor": "#7C3AED",
     "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
       "backgroundColor": "#7C3AED"
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.example.heitje",
+      "bundleIdentifier": "nl.heitje.karweitje",
       "infoPlist": {
         "NSCameraUsageDescription": "Heitje uses the camera for before/after photos of chores.",
         "NSPhotoLibraryUsageDescription": "Heitje uses your photo library for savings goal images."
       }
     },
     "android": {
-      "package": "com.example.heitje",
-      "permissions": ["CAMERA"]
+      "package": "nl.heitje.karweitje",
+      "permissions": ["CAMERA"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#7C3AED"
+      }
+    },
+    "web": {
+      "favicon": "./assets/icon.png"
     },
     "plugins": [
       [
