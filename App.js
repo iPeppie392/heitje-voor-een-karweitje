@@ -144,10 +144,10 @@ export default function App() {
       <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
         <StatusBar style={scheme === "dark" ? "light" : "dark"} />
         <View style={{ flex: 1, justifyContent: "center", padding: 24 }}>
-          <Text style={{ fontSize: 34, fontWeight: "800", color: t.ink, letterSpacing: -1 }}>
+          <Text style={{ fontSize: 46, fontWeight: "900", color: t.ink, letterSpacing: -1.5 }}>
             Heit<Text style={{ color: t.accent }}>je</Text></Text>
-          <Text style={{ fontSize: 13, fontWeight: "700", color: t.sub, marginBottom: 28 }}>voor een karweitje</Text>
-          <Text style={{ fontSize: 16, fontWeight: "700", color: t.ink, marginBottom: 14 }}>Wie ben jij?</Text>
+          <Text style={{ fontSize: 17, fontWeight: "800", color: t.accent, marginBottom: 28 }}>voor een karweitje</Text>
+          <Text style={{ fontSize: 18, fontWeight: "700", color: t.ink, marginBottom: 14 }}>Wie ben jij?</Text>
           {Object.entries(S.members).map(([k, m]) => (
             <TouchableOpacity key={k} onPress={() => setMe(k)} style={{ backgroundColor: t.card, borderWidth: 1,
               borderColor: t.line, borderRadius: 18, padding: 16, marginBottom: 10, flexDirection: "row",
@@ -585,9 +585,9 @@ export default function App() {
       {/* Header — prominent logo + profielwissel */}
       <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingTop: 10, paddingBottom: 12, gap: 10 }}>
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 32, fontWeight: "900", color: t.ink, letterSpacing: -1.5 }}>
+          <Text style={{ fontSize: 40, fontWeight: "900", color: t.ink, letterSpacing: -2 }}>
             Heit<Text style={{ color: t.accent }}>je</Text></Text>
-          <Text style={{ fontSize: 12.5, fontWeight: "800", color: t.accent, letterSpacing: 0.2, marginTop: -3 }}>
+          <Text style={{ fontSize: 15, fontWeight: "800", color: t.accent, letterSpacing: 0.2, marginTop: -3 }}>
             voor een karweitje</Text>
         </View>
         <Chip t={t} big>💰 {fmt(S.balances[me])}</Chip>
