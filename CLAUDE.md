@@ -66,6 +66,11 @@ There is no test suite yet. Verify changes by running in Expo Go.
 6. **Free-tier limits** (premium upsell points): max 5 active chores, 1 savings goal per
    kid, 10 proof photos/week. Premium: €0.99/month or €9.99 lifetime (via RevenueCat, later).
 7. **Parents are equals**: every parent can approve, manage, and register payouts.
+9. **Login / auto-login**: no real accounts yet. The welcome screen is the profile picker; the
+   chosen profile is stored in `S.lastMe` and the app auto-opens to it on next launch (local,
+   this device). Real "Sign in with Apple/Google" needs the backend + paid dev accounts (later).
+   Home shows the current user's active chores (kid) and the to-approve list (parent) as full,
+   actionable ChoreCards, plus stat tiles, quick action, savings goal, family strip and activity.
 8. **Design**: white/premium, ONE accent color (violet #7C3AED), generous whitespace,
    radius 16–24, system fonts, automatic dark mode. Amounts are the largest element on
    their card. Energy comes from micro-interactions (confetti, streaks), not busy visuals.

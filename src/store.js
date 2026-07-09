@@ -28,6 +28,7 @@ export const DEFAULT_STATE = {
   },
   feed: [],
   pendingAlloc: null, // { kid, cents, title }
+  lastMe: null,       // laatst gekozen profiel op dit toestel → automatisch inloggen
 };
 
 export async function loadState() {

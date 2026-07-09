@@ -18,6 +18,7 @@ export default function App() {
   const t = scheme === "dark" ? dark : light;
 
   const [loaded, setLoaded] = useState(false);
+  const [booted, setBooted] = useState(false);
   const [S, setS] = useState(DEFAULT_STATE);
   const [me, setMe] = useState(null); // active profile on this device
   const [tab, setTab] = useState("feed");
@@ -28,6 +29,16 @@ export default function App() {
 
   useEffect(() => { loadState().then(s => { setS(s); setLoaded(true); }); }, []);
   useEffect(() => { if (loaded) saveState(S); }, [S, loaded]);
+  // Automatisch inloggen: open meteen bij het laatst gekozen profiel op dit toestel
+  useEffect(() => {
+    if (loaded && !booted) {
+      setBooted(true);
+      if (S.lastMe && S.members[S.lastMe]) setMe(S.lastMe);
+    }
+  }, [loaded, booted, S]);
+
+  // Profiel kiezen op de inlogpagina — onthoudt de keuze voor de volgende keer
+  const pick = (k) => { setMe(k); patch({ lastMe: k }); };
 
   const fmt = (c) => fmt0(c, S.cur);
   const M = me ? S.members[me] : null;
@@ -145,24 +156,35 @@ export default function App() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
         <StatusBar style={scheme === "dark" ? "light" : "dark"} />
-        <View style={{ flex: 1, justifyContent: "center", padding: 24 }}>
-          <Text style={{ fontSize: 46, fontWeight: "900", color: t.ink, letterSpacing: -1.5 }}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24 }}>
+          <Text style={{ fontSize: 52, fontWeight: "900", color: t.ink, letterSpacing: -2 }}>
             Heit<Text style={{ color: t.accent }}>je</Text></Text>
-          <Text style={{ fontSize: 17, fontWeight: "800", color: t.accent, marginBottom: 28 }}>voor een karweitje</Text>
-          <Text style={{ fontSize: 18, fontWeight: "700", color: t.ink, marginBottom: 14 }}>Wie ben jij?</Text>
+          <Text style={{ fontSize: 18, fontWeight: "800", color: t.accent, marginBottom: 26 }}>voor een karweitje</Text>
+          <Text style={{ fontSize: 20, fontWeight: "800", color: t.ink }}>Wie ben jij?</Text>
+          <Text style={{ fontSize: 13, color: t.sub, marginBottom: 16 }}>Tik op je naam. Je blijft daarna ingelogd op dit toestel.</Text>
           {Object.entries(S.members).map(([k, m]) => (
-            <TouchableOpacity key={k} onPress={() => setMe(k)} style={{ backgroundColor: t.card, borderWidth: 1,
-              borderColor: t.line, borderRadius: 18, padding: 16, marginBottom: 10, flexDirection: "row",
+            <TouchableOpacity key={k} onPress={() => pick(k)} style={{ backgroundColor: t.card, borderWidth: 1,
+              borderColor: k === S.lastMe ? t.accent : t.line, borderRadius: 18, padding: 16, marginBottom: 10, flexDirection: "row",
               alignItems: "center", gap: 12 }}>
-              <Text style={{ fontSize: 28 }}>{m.avatar}</Text>
-              <View>
-                <Text style={{ fontWeight: "800", fontSize: 16, color: t.ink }}>{m.name}</Text>
-                <Text style={{ fontSize: 12, color: t.sub }}>
-                  {m.role === "kind" ? `Kind · ${m.age} jaar` : "Ouder"}</Text>
+              <View style={{ width: 48, height: 48, borderRadius: 999, backgroundColor: t.soft, alignItems: "center", justifyContent: "center" }}>
+                <Text style={{ fontSize: 26 }}>{m.avatar}</Text></View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: "800", fontSize: 17, color: t.ink }}>{m.name}</Text>
+                <Text style={{ fontSize: 12.5, color: t.sub }}>
+                  {m.role === "kind" ? `Kind · ${m.age} jaar` : "Ouder"}{k === S.lastMe ? " · laatst gebruikt" : ""}</Text>
               </View>
+              <Text style={{ fontSize: 20, color: t.sub }}>›</Text>
             </TouchableOpacity>
           ))}
-        </View>
+          <View style={{ flexDirection: "row", justifyContent: "center", gap: 16, marginTop: 20 }}>
+            <TouchableOpacity onPress={() => Linking.openURL(`${LEGAL_BASE}/privacy.html`)}>
+              <Text style={{ color: t.sub, fontSize: 12, textDecorationLine: "underline" }}>Privacybeleid</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => Linking.openURL(`${LEGAL_BASE}/voorwaarden.html`)}>
+              <Text style={{ color: t.sub, fontSize: 12, textDecorationLine: "underline" }}>Voorwaarden</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -393,6 +415,22 @@ export default function App() {
         </Card>
       ) : null}
 
+      {/* Mijn klusjes (kind) — direct af te ronden vanaf de home */}
+      {role === "kind" && S.chores.some(c => c.by === me && c.status !== "open") ? (
+        <>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>MIJN KLUSJES</Text>
+          {S.chores.filter(c => c.by === me && c.status !== "open").map(c => <ChoreCard key={c.id} c={c} />)}
+        </>
+      ) : null}
+
+      {/* Te keuren (ouder) — direct goedkeuren vanaf de home */}
+      {role === "ouder" && waiting.length ? (
+        <>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>TE KEUREN</Text>
+          {waiting.map(c => <ChoreCard key={c.id} c={c} />)}
+        </>
+      ) : null}
+
       {/* Gezinsstrip */}
       <Card t={t} onPress={() => setTab("gezin")} style={{ marginBottom: 14 }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -562,6 +600,9 @@ export default function App() {
         <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
           Data staat lokaal op dit toestel (nog geen synchronisatie tussen telefoons — dat komt met de Supabase-backend).
           Weergave per kind: junior (motivatiebalk) onder 12, tiener (ring met %) vanaf 12 — automatisch via leeftijd.</Text>
+        <Text style={{ fontSize: 11.5, color: t.sub, marginBottom: 10, lineHeight: 16 }}>
+          ⚠️ Disclaimer: testversie, "as-is", zonder garanties. Bedragen zijn geen echt geld — de app verwerkt geen
+          betalingen. Uitbetalen en aankopen doet de ouder zelf. Gebruik op eigen risico. Zie de voorwaarden.</Text>
         <Btn t={t} small kind="danger" onPress={() =>
           Alert.alert("Demo resetten", "Alle lokale data wissen?", [
             { text: "Annuleren", style: "cancel" },
