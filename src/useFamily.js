@@ -55,12 +55,12 @@ export function useFamily({ familyId, onCloudState }) {
     return data[0]; // { family_id, member_id }
   }, []);
 
-  const createInvite = useCallback(async (familyId) => {
+  const createInvite = useCallback(async (familyId, role = "ouder") => {
     const code = randomCode();
     const { data: memberRow } = await supabase.from("members")
       .select("id").eq("family_id", familyId).eq("auth_user_id", session?.user?.id).single();
     const { error } = await supabase.from("family_invites").insert({
-      family_id: familyId, code, created_by: memberRow?.id,
+      family_id: familyId, code, created_by: memberRow?.id, role,
     });
     if (error) throw error;
     return code;
@@ -71,7 +71,7 @@ export function useFamily({ familyId, onCloudState }) {
       invite_code: code.trim().toUpperCase(), parent_name: parentName, parent_avatar: parentAvatar,
     });
     if (error) throw error;
-    return data[0]; // { family_id, member_id }
+    return data[0]; // { family_id, member_id, role } — role komt pas hierna, server-geverifieerd
   }, []);
 
   const redeemPromoCode = useCallback(async (code) => {

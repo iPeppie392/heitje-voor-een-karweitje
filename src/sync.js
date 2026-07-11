@@ -4,7 +4,7 @@ import { supabase } from "./supabase";
 const QUEUE_KEY = "heitje-pending-writes-v1";
 
 // ---- Vertaling: Supabase-rijen -> dezelfde vorm die App.js al gebruikt ----
-export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkItems, screenGoals, balances, family }) {
+export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkItems, screenGoals, choreOffers, balances, family }) {
   // Verwijderde gezinsleden worden nooit hard gewist (dat zou hun hele zakgeld-
   // geschiedenis meeslepen via de foreign keys) — alleen gemarkeerd als "archived".
   // Die horen hier nergens meer in de lokale state te verschijnen.
@@ -34,8 +34,15 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkIt
       id: c.id, title: c.title, room: c.room, emoji: c.emoji, cents: c.cents,
       status: c.status, by: c.claimed_by, conditions: c.conditions,
       checked: c.checked, beforeUri: c.before_uri, afterUri: c.after_uri,
-      reason: c.reject_reason, allocated: c.allocated,
+      reason: c.reject_reason, allocated: c.allocated, offeredBy: c.offered_by,
     }));
+
+  // Klusjes-van-buitenaf: een gast ziet (via RLS) toch al alleen zijn eigen voorstellen,
+  // een ouder ziet ze allemaal — hier gewoon kaal doorgeven, geen extra filtering nodig.
+  const choreOffersOut = (choreOffers || []).map((o) => ({
+    id: o.id, offeredBy: o.offered_by, title: o.title, room: o.room, emoji: o.emoji,
+    cents: o.cents, note: o.note, status: o.status,
+  }));
 
   const goalsById = {};
   for (const g of goals) {
@@ -70,29 +77,33 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkIt
   return {
     members: membersById, balances: balancesById, chores: choresOut, goals: goalsById, feed: feedOut,
     homework: homeworkOut, screenBalances: screenBalancesById, screenGoals: screenGoalsById,
+    choreOffers: choreOffersOut,
     cur: family?.currency, premiumUnlocked: !!family?.premium_unlocked,
     homeworkEnabled: family?.homework_enabled !== false, homeworkRewardMode: family?.homework_reward_mode || "minutes",
   };
 }
 
 export async function pullFamilyState(familyId) {
-  const [members, chores, goals, feedPosts, homeworkItems, screenGoals, balances, family] = await Promise.all([
+  const [members, chores, goals, feedPosts, homeworkItems, screenGoals, choreOffers, balances, family] = await Promise.all([
     supabase.from("members").select("*").eq("family_id", familyId),
     supabase.from("chores").select("*").eq("family_id", familyId),
     supabase.from("goals").select("*").eq("family_id", familyId),
     supabase.from("feed_posts").select("*").eq("family_id", familyId).order("created_at", { ascending: false }).limit(200),
     supabase.from("homework_items").select("*").eq("family_id", familyId),
     supabase.from("screentime_goals").select("*").eq("family_id", familyId),
+    supabase.from("chore_offers").select("*").eq("family_id", familyId),
     supabase.from("member_balances").select("*").eq("family_id", familyId),
     supabase.from("families").select("*").eq("id", familyId).single(),
   ]);
   for (const r of [members, chores, goals, feedPosts, balances, family]) if (r.error) throw r.error;
-  // homework_items/screentime_goals bestaan pas zodra sql/005/006 gedraaid zijn — tot die
-  // migraties gedraaid zijn, mag een ontbrekende tabel de rest van de sync niet breken.
+  // homework_items/screentime_goals/chore_offers bestaan pas zodra sql/005/006/007
+  // gedraaid zijn — tot die migraties gedraaid zijn, mag een ontbrekende tabel de rest
+  // van de sync niet breken.
   return rowsToLocalShape({
     members: members.data, chores: chores.data, goals: goals.data,
     feedPosts: feedPosts.data, homeworkItems: homeworkItems.error ? [] : homeworkItems.data,
     screenGoals: screenGoals.error ? [] : screenGoals.data,
+    choreOffers: choreOffers.error ? [] : choreOffers.data,
     balances: balances.data, family: family.data,
   });
 }
@@ -107,6 +118,7 @@ export function subscribeFamilyRealtime(familyId, onChange) {
     .on("postgres_changes", { event: "*", schema: "public", table: "feed_posts", filter: `family_id=eq.${familyId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "homework_items", filter: `family_id=eq.${familyId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "screentime_goals", filter: `family_id=eq.${familyId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "chore_offers", filter: `family_id=eq.${familyId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "families", filter: `id=eq.${familyId}` }, onChange)
     .subscribe();
   return () => supabase.removeChannel(channel);
@@ -161,6 +173,8 @@ export const push = {
   upsertScreenGoal: (familyId, kidId, goal) => run("screentime_goals", "insert", { family_id: familyId, kid_id: kidId, ...goal }),
   updateScreenGoal: (id, values) => run("screentime_goals", "update", { values, match: { id } }),
   adjustScreentime: (memberId, delta) => runRpc("adjust_screentime", { p_member_id: memberId, p_delta: delta }),
+  upsertChoreOffer: (familyId, offer) => run("chore_offers", "insert", { family_id: familyId, ...offer }),
+  decideChoreOffer: (offerId, decision) => runRpc("approve_chore_offer", { p_offer_id: offerId, p_decision: decision }),
 };
 
 export async function flushPendingWrites() {

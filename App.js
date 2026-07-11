@@ -58,6 +58,7 @@ export default function App() {
   const [rejectFor, setRejectFor] = useState(null); // chore id being rejected
   const [familySetupOpen, setFamilySetupOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState(null);
+  const [guestInviteCode, setGuestInviteCode] = useState(null);
   const [kidModal, setKidModal] = useState(false);
   const [qrKid, setQrKid] = useState(null); // key van kind waarvan de deel-QR getoond wordt
   const [parentModal, setParentModal] = useState(false);
@@ -239,6 +240,42 @@ export default function App() {
         if (S.familyId && fam.backendConfigured) push.updateMember(key, { archived: true });
       } },
     ]);
+  };
+
+  // Klusje-van-buitenaf: een gast (opa/oma/oom/tante/vriend) stelt dit voor. Landt
+  // altijd eerst als "pending" in chore_offers — nooit direct in de echte klusjes-pool,
+  // dat vereist expliciete goedkeuring van een ouder (zie decideChoreOffer).
+  const submitChoreOffer = ({ title, room, emoji, cents, note }) => {
+    const id = uid();
+    const offer = { id, offeredBy: me, title, room: room || null, emoji: emoji || null, cents, note: note || null, status: "pending" };
+    setS(s => ({ ...s, choreOffers: [...s.choreOffers, offer] }));
+    if (S.familyId && fam.backendConfigured) {
+      push.upsertChoreOffer(S.familyId, {
+        id, offered_by: me, title, room: room || null, emoji: emoji || null, cents, note: note || null,
+      });
+      for (const parent of Object.values(S.members).filter(m => m.role === "ouder")) {
+        if (parent.push_token) sendPushNotification(parent.push_token, "Klusje aangeboden van buitenaf",
+          `${M?.name || "Iemand"} stelt voor: ${title}`);
+      }
+    }
+  };
+
+  // Ouder keurt een voorstel goed/af. De RPC zet 'm bij goedkeuring server-side
+  // atomair om in een echt klusje (chores) — dat komt via de eerstvolgende realtime-
+  // pull binnen, hier alleen optimistisch de status van het voorstel zelf bijwerken
+  // (nooit lokaal alvast een chore-rij verzinnen, dat zou kunnen dubbelen).
+  const decideChoreOffer = (offerId, decision) => {
+    const offer = S.choreOffers.find(o => o.id === offerId);
+    setS(s => ({ ...s, choreOffers: s.choreOffers.map(o => o.id === offerId ? { ...o, status: decision } : o) }));
+    if (S.familyId && fam.backendConfigured) {
+      push.decideChoreOffer(offerId, decision);
+      const guest = offer ? S.members[offer.offeredBy] : null;
+      if (guest?.push_token) {
+        sendPushNotification(guest.push_token,
+          decision === "approved" ? "Klusje goedgekeurd! 🎉" : "Klusje niet goedgekeurd",
+          decision === "approved" ? `"${offer.title}" staat nu in de klusjespool.` : `"${offer.title}" is deze keer niet doorgegaan.`);
+      }
+    }
   };
 
   // Gratis premium-code inwisselen (fase 6b) — vereist een gezin-account, want de code
@@ -547,6 +584,7 @@ export default function App() {
 
   // ----- UI helpers -----
   const kids = Object.keys(S.members).filter(k => S.members[k].role === "kind");
+  const guests = Object.keys(S.members).filter(k => S.members[k].role === "gast");
   const waiting = S.chores.filter(c => c.status === "waiting");
   const active = S.chores.filter(c => true);
   const myGoal = role === "kind" ? S.goals[me] : null;
@@ -614,7 +652,7 @@ export default function App() {
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: "800", fontSize: 17, color: t.ink }}>{m.name}</Text>
                 <Text style={{ fontSize: 12.5, color: t.sub }}>
-                  {m.role === "kind" ? `Kind · ${m.age} jaar` : "Ouder"}{k === S.lastMe ? " · laatst gebruikt" : ""}</Text>
+                  {m.role === "kind" ? `Kind · ${m.age} jaar` : m.role === "gast" ? "Gast" : "Ouder"}{k === S.lastMe ? " · laatst gebruikt" : ""}</Text>
               </View>
               <Text style={{ fontSize: 20, color: t.sub }}>›</Text>
             </TouchableOpacity>
@@ -638,6 +676,19 @@ export default function App() {
     );
   }
 
+  // Gast (opa/oma/oom/tante/vriend, uitgenodigd via een privé-code) krijgt een
+  // losstaand, minimaal scherm — geen toegang tot Home/Klusjes/Sparen/Huiswerk/Gezin/
+  // Instellingen. Alleen: klusje voorstellen + eigen voorstellen terugzien.
+  if (role === "gast") {
+    const myOffers = S.choreOffers.filter(o => o.offeredBy === me).slice().reverse();
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+        <StatusBar style={isDark ? "light" : "dark"} />
+        <GastView t={t} M={M} fmt={fmt} myOffers={myOffers} onSubmit={submitChoreOffer} />
+      </SafeAreaView>
+    );
+  }
+
   // ----- Chore card -----
   const ChoreCard = ({ c }) => {
     const mine = c.by === me;
@@ -653,6 +704,10 @@ export default function App() {
           <View style={{ flex: 1 }}>
             <Text style={{ fontWeight: "700", fontSize: jr ? 16 : 15, color: t.ink }}>{c.title}</Text>
             <Text style={{ fontSize: 12, color: t.sub }}>{c.room}</Text>
+            {c.offeredBy ? (
+              <Text style={{ fontSize: 11, color: t.accent, marginTop: 2 }}>
+                🎗️ Aangeboden door {S.members[c.offeredBy]?.name || "een gast"}</Text>
+            ) : null}
           </View>
           <Amount t={t} size={jr ? 24 : 22}>{fmt(c.cents)}</Amount>
         </View>
@@ -868,7 +923,7 @@ export default function App() {
     // blijft een kaartje hier hangen zonder passende statustekst zolang het kind nog
     // niet gekozen heeft waar het bedrag heen gaat.
     const activeChoreOf = (k) => S.chores.find(c => c.by === k && c.status !== "open" && c.status !== "approved");
-    const ordered = Object.entries(S.members).slice()
+    const ordered = Object.entries(S.members).filter(([, m]) => m.role !== "gast")
       .sort((a, b) => (a[0] === me ? -1 : b[0] === me ? 1 : 0) || (S.balances[b[0]] - S.balances[a[0]]));
 
     const Tile = ({ icon, value, label, onPress, hot }) => (
@@ -1092,8 +1147,35 @@ export default function App() {
     );
   };
 
+  const pendingOffers = S.choreOffers.filter(o => o.status === "pending");
+
   const Chores = () => (
     <>
+      {role === "ouder" && pendingOffers.length > 0 ? (
+        <>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>AANGEBODEN VAN BUITENAF</Text>
+          {pendingOffers.map(o => (
+            <Card t={t} key={o.id} style={{ marginBottom: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <View style={{ width: 46, height: 46, borderRadius: 14, backgroundColor: t.soft,
+                  alignItems: "center", justifyContent: "center" }}>
+                  <Text style={{ fontSize: 22 }}>{o.emoji || "🎁"}</Text></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{o.title}</Text>
+                  <Text style={{ fontSize: 12, color: t.sub }}>
+                    Van {S.members[o.offeredBy]?.name || "een gast"}{o.room ? ` · ${o.room}` : ""}</Text>
+                  {o.note ? <Text style={{ fontSize: 12, color: t.sub, marginTop: 2 }}>{o.note}</Text> : null}
+                </View>
+                <Amount t={t} size={20}>{fmt(o.cents)}</Amount>
+              </View>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                <View style={{ flex: 1 }}><Btn t={t} small onPress={() => decideChoreOffer(o.id, "approved")}>Goedkeuren ✓</Btn></View>
+                <View style={{ flex: 1 }}><Btn t={t} small kind="ghost" onPress={() => decideChoreOffer(o.id, "declined")}>Afwijzen</Btn></View>
+              </View>
+            </Card>
+          ))}
+        </>
+      ) : null}
       {role === "ouder" && waiting.length > 0 ? (
         <>
           <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>GOED TE KEUREN</Text>
@@ -1294,6 +1376,55 @@ export default function App() {
               </View>
             </Card>
           ))}
+        </>
+      ) : null}
+
+      {role === "ouder" ? (
+        <>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>
+            GASTEN — KLUSJES VAN BUITENAF</Text>
+          {guests.length === 0 ? (
+            <Text style={{ fontSize: 12, color: t.sub, marginBottom: 12 }}>
+              Nog geen gasten uitgenodigd. Opa, oma, een oom/tante of familievriend kan zo een klusje
+              voorstellen — jij keurt het altijd eerst goed voordat het zichtbaar wordt.</Text>
+          ) : guests.map((k) => {
+            const m = S.members[k];
+            return (
+              <Card t={t} key={k} style={{ marginBottom: 10 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 999, backgroundColor: t.soft,
+                    alignItems: "center", justifyContent: "center" }}><Text style={{ fontSize: 22 }}>{m.avatar}</Text></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{m.name}</Text>
+                    <Text style={{ fontSize: 12, color: t.sub }}>Gast</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}>
+                    <Text style={{ color: t.danger, fontWeight: "800", fontSize: 13 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              </Card>
+            );
+          })}
+          {fam.backendConfigured && S.familyId ? (
+            <Card t={t} style={{ marginBottom: 12 }}>
+              <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 10 }}>🧓 Gast uitnodigen</Text>
+              {guestInviteCode ? (
+                <View style={{ alignItems: "center" }}>
+                  <View style={{ backgroundColor: "#fff", padding: 12, borderRadius: 12, marginBottom: 10 }}>
+                    <QRCode value={`${LEGAL_BASE}/join/${guestInviteCode}`} size={140} />
+                  </View>
+                  <Text style={{ fontWeight: "900", fontSize: 22, letterSpacing: 3, color: t.ink, marginBottom: 6 }}>{guestInviteCode}</Text>
+                  <Text style={{ fontSize: 12, color: t.sub, textAlign: "center" }}>
+                    Geldig 24 uur. Laat de gast scannen, of de code intypen bij "Ik heb een code".</Text>
+                </View>
+              ) : (
+                <Btn t={t} small onPress={async () => {
+                  try { setGuestInviteCode(await fam.createInvite(S.familyId, "gast")); }
+                  catch { alertX("Dat ging niet goed", "Probeer het nog eens."); }
+                }}>Uitnodiging maken voor een gast</Btn>
+              )}
+            </Card>
+          ) : null}
         </>
       ) : null}
 
@@ -1786,6 +1917,59 @@ function Sheet({ t, visible, onClose, title, children }) {
 
 const inputStyle = (t) => ({ borderWidth: 1, borderColor: t.line, borderRadius: 12, padding: 12,
   color: t.ink, marginBottom: 10, fontSize: 15 });
+
+// Losstaand, minimaal scherm voor een gast (opa/oma/oom/tante/vriend) — geen toegang
+// tot de rest van de app, alleen een klusje voorstellen en de eigen voorstellen terugzien.
+function GastView({ t, M, fmt, myOffers, onSubmit }) {
+  const [title, setTitle] = useState("");
+  const [room, setRoom] = useState("");
+  const [euros, setEuros] = useState("");
+  const [note, setNote] = useState("");
+  const submit = () => {
+    const cents = Math.round(parseFloat(euros.replace(",", ".")) * 100);
+    if (!title.trim() || !cents || cents <= 0) { alertX("Vul een titel en een geldig bedrag in"); return; }
+    onSubmit({ title: title.trim(), room: room.trim() || null, emoji: "🎁", cents, note: note.trim() || null });
+    setTitle(""); setRoom(""); setEuros(""); setNote("");
+    alertX("Verstuurd! ✅", "Een ouder keurt je voorstel eerst goed voordat het een echt klusje wordt.");
+  };
+  const STATUS_LABEL = { pending: "⏳ In behandeling", approved: "✅ Goedgekeurd", declined: "❌ Afgewezen" };
+  return (
+    <ScrollView contentContainerStyle={{ padding: 20 }}>
+      <Text style={{ fontSize: 24, fontWeight: "900", color: t.ink, marginBottom: 4 }}>Hoi {M?.name}! 👋</Text>
+      <Text style={{ fontSize: 13, color: t.sub, marginBottom: 20 }}>
+        Je bent uitgenodigd om een klusje voor te stellen. Een ouder keurt het altijd eerst goed
+        voordat het een echt klusje wordt.</Text>
+
+      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>KLUSJE VOORSTELLEN</Text>
+      <TextInput style={inputStyle(t)} placeholder="Titel (bijv. Boodschappen doen)" placeholderTextColor={t.sub}
+        value={title} onChangeText={setTitle} />
+      <TextInput style={inputStyle(t)} placeholder="Kamer/plek (optioneel)" placeholderTextColor={t.sub}
+        value={room} onChangeText={setRoom} />
+      <TextInput style={inputStyle(t)} placeholder="Voorgesteld bedrag (bijv. 2,50)" placeholderTextColor={t.sub}
+        keyboardType="decimal-pad" value={euros} onChangeText={setEuros} />
+      <TextInput style={inputStyle(t)} placeholder="Notitie (optioneel)" placeholderTextColor={t.sub}
+        value={note} onChangeText={setNote} />
+      <Btn t={t} onPress={submit}>Voorstellen — ouder keurt goed</Btn>
+
+      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginTop: 26, marginBottom: 10 }}>
+        MIJN VOORSTELLEN</Text>
+      {myOffers.length === 0 ? (
+        <Text style={{ fontSize: 13, color: t.sub }}>Nog niets voorgesteld.</Text>
+      ) : myOffers.map((o) => (
+        <Card t={t} key={o.id} style={{ marginBottom: 10 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{o.title}</Text>
+              {o.room ? <Text style={{ fontSize: 12, color: t.sub }}>{o.room}</Text> : null}
+            </View>
+            <Amount t={t} size={18}>{fmt(o.cents)}</Amount>
+          </View>
+          <Text style={{ fontSize: 12, color: t.sub, marginTop: 6 }}>{STATUS_LABEL[o.status] || o.status}</Text>
+        </Card>
+      ))}
+    </ScrollView>
+  );
+}
 
 function AddChoreModal({ t, visible, onClose, onAdd }) {
   const [title, setTitle] = useState("");
