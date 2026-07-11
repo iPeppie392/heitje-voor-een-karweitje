@@ -21,7 +21,7 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, balances, 
     id: c.id, title: c.title, room: c.room, emoji: c.emoji, cents: c.cents,
     status: c.status, by: c.claimed_by, conditions: c.conditions,
     checked: c.checked, beforeUri: c.before_uri, afterUri: c.after_uri,
-    rejectReason: c.reject_reason,
+    reason: c.reject_reason,
   }));
 
   const goalsById = {};
@@ -35,7 +35,7 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, balances, 
   const feedOut = feedPosts.map((f) => ({
     id: f.id, who: f.who, title: f.title, cents: f.cents,
     beforeUri: f.before_uri, afterUri: f.after_uri, badge: f.badge,
-    rx: f.rx, createdAt: f.created_at,
+    rx: f.rx, time: f.created_at,
   }));
 
   return {
@@ -100,6 +100,8 @@ export const push = {
   updateGoal: (id, values) => run("goals", "update", { values, match: { id } }),
   addLedgerEntry: (familyId, entry) => run("ledger_entries", "insert", { family_id: familyId, ...entry }),
   addFeedPost: (familyId, post) => run("feed_posts", "insert", { family_id: familyId, ...post }),
+  updateFeedPost: (id, values) => run("feed_posts", "update", { values, match: { id } }),
+  upsertMember: (familyId, member) => run("members", "insert", { family_id: familyId, ...member }),
   updateMember: (id, values) => run("members", "update", { values, match: { id } }),
 };
 

@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { uid } from "./id";
 
 export const KEY = "heitje-state-v1";
 
@@ -23,8 +24,8 @@ export const DEFAULT_STATE = {
     { id: 3, title: "Stofzuigen beneden", room: "Woonkamer", emoji: "🧹", cents: 250, status: "open", by: null },
   ],
   goals: {
-    emma: { name: "LEGO Technic kraan", emoji: "🧱", imageUri: null, target: 4999, saved: 0, link: "", approved: true },
-    daan: { name: "Nintendo-game", emoji: "🎮", imageUri: null, target: 5999, saved: 0, link: "", approved: false },
+    emma: { id: uid(), name: "LEGO Technic kraan", emoji: "🧱", imageUri: null, target: 4999, saved: 0, link: "", approved: true },
+    daan: { id: uid(), name: "Nintendo-game", emoji: "🎮", imageUri: null, target: 5999, saved: 0, link: "", approved: false },
   },
   feed: [],
   pendingAlloc: null, // { kid, cents, title }

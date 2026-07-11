@@ -16,6 +16,8 @@ import { loadState, saveState, resetState, DEFAULT_STATE, DEFAULT_MEMBERS } from
 import { Card, Btn, Chip, Amount, PhotoBox, Ring, JuniorBar, Confetti, AdSlot } from "./src/components";
 import { useFamily } from "./src/useFamily";
 import { supabase } from "./src/supabase";
+import { push, pullFamilyState } from "./src/sync";
+import { uid } from "./src/id";
 import FamilySetup from "./src/screens/FamilySetup";
 
 const FREE_CHORE_LIMIT = 5; // free tier: max active chores (premium: unlimited)
@@ -72,8 +74,14 @@ export default function App() {
     familyId: S.familyId,
     onCloudState: (cloud) => setS(s => ({ ...s, ...cloud })),
   });
-  const onFamilySetupDone = ({ familyId, memberId, didMigrate }) => {
-    patch({ familyId, cloudMemberId: memberId, migrated: S.migrated || didMigrate });
+  const onFamilySetupDone = async ({ familyId, memberId, didMigrate }) => {
+    // Eerst de cloud-data ophalen en in S zetten, en pas dán me/lastMe wijzigen —
+    // anders is S.members nog de oude (lokale) set op het moment dat me al op het
+    // nieuwe cloud-uuid staat, en zet het vangnet (regel hieronder) me meteen weer
+    // terug op null (dezelfde bug-klasse als de eerdere witte-scherm-crash).
+    let cloud = {};
+    try { cloud = await pullFamilyState(familyId); } catch { /* volgende realtime-pull haalt dit alsnog op */ }
+    setS(s => ({ ...s, ...cloud, familyId, cloudMemberId: memberId, migrated: S.migrated || didMigrate, lastMe: memberId }));
     setFamilySetupOpen(false);
     setMe(memberId);
   };
@@ -165,25 +173,28 @@ export default function App() {
   const closeTour = () => { patch({ tourSeen: true }); setTourForced(false); setTourStep(0); };
 
   // Nieuw kind lokaal toevoegen (en meesynchroniseren als er al een gezin-account is).
-  const addKid = async (kid) => {
-    const key = `${kid.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}`;
+  const addKid = (kid) => {
+    const key = uid();
     setS(s => ({ ...s, members: { ...s.members, [key]: kid }, balances: { ...s.balances, [key]: 0 } }));
     setKidModal(false);
     if (S.familyId && fam.backendConfigured) {
-      try {
-        await supabase.from("members").insert({
-          family_id: S.familyId, name: kid.name, avatar: kid.avatar, age: kid.age, role: "kind", color: kid.color,
-        });
-      } catch { /* lokaal staat het goed, cloud-sync haalt dit later alsnog op */ }
+      push.upsertMember(S.familyId, {
+        id: key, name: kid.name, avatar: kid.avatar, age: kid.age, role: "kind", color: kid.color,
+      });
     }
   };
 
   // Extra ouder lokaal toevoegen (geen eigen inlog-account — dat is alleen nodig als
   // deze ouder ook op een ánder toestel wil inloggen, via Gezin delen/QR).
   const addParent = (parent) => {
-    const key = `${parent.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}`;
+    const key = uid();
     setS(s => ({ ...s, members: { ...s.members, [key]: parent }, balances: { ...s.balances, [key]: 0 } }));
     setParentModal(false);
+    if (S.familyId && fam.backendConfigured) {
+      push.upsertMember(S.familyId, {
+        id: key, name: parent.name, avatar: parent.avatar, age: parent.age, role: "ouder", color: parent.color,
+      });
+    }
   };
 
   // Gezinslid verwijderen — met bevestiging, en een vangnet zodat er altijd
@@ -222,16 +233,12 @@ export default function App() {
   };
 
   // Externe bijdrage handmatig registreren nadat een ouder 'm echt heeft ontvangen.
-  const receiveGift = async (kidKey, cents, giver) => {
+  const receiveGift = (kidKey, cents, giver) => {
     setS(s => ({ ...s, balances: { ...s.balances, [kidKey]: (s.balances[kidKey] || 0) + cents } }));
     addFeed({ who: kidKey, badge: `🎁 Bijdrage van ${giver}: ${fmt(cents)}` });
     setGiftModal(false);
     if (S.familyId && fam.backendConfigured) {
-      try {
-        await supabase.from("ledger_entries").insert({
-          family_id: S.familyId, member_id: kidKey, cents, kind: "manual_adjustment", note: `Bijdrage van ${giver}`,
-        });
-      } catch {}
+      push.addLedgerEntry(S.familyId, { member_id: kidKey, cents, kind: "manual_adjustment", note: `Bijdrage van ${giver}` });
     }
   };
 
@@ -249,14 +256,44 @@ export default function App() {
     return res.canceled ? null : res.assets[0].uri;
   };
 
-  const addFeed = (post) =>
-    setS(s => ({ ...s, feed: [{ id: Date.now(), time: new Date().toISOString(), rx: { "👏": 0, "🔥": 0, "❤️": 0 }, ...post }, ...s.feed] }));
+  const addFeed = (post) => {
+    const id = uid();
+    const time = new Date().toISOString();
+    const rx = { "👏": 0, "🔥": 0, "❤️": 0 };
+    setS(s => ({ ...s, feed: [{ id, time, rx, ...post }, ...s.feed] }));
+    if (S.familyId && fam.backendConfigured) {
+      push.addFeedPost(S.familyId, {
+        id, who: post.who ?? null, title: post.title ?? null, cents: post.cents ?? null,
+        before_uri: post.beforeUri ?? null, after_uri: post.afterUri ?? null, badge: post.badge ?? null, rx,
+      });
+    }
+  };
 
-  const react = (id, e) =>
-    setS(s => ({ ...s, feed: s.feed.map(p => p.id === id ? { ...p, rx: { ...p.rx, [e]: p.rx[e] + 1 } } : p) }));
+  const react = (id, e) => {
+    const post = S.feed.find(p => p.id === id);
+    if (!post) return;
+    const rx = { ...post.rx, [e]: post.rx[e] + 1 };
+    setS(s => ({ ...s, feed: s.feed.map(p => p.id === id ? { ...p, rx } : p) }));
+    if (S.familyId && fam.backendConfigured) push.updateFeedPost(id, { rx });
+  };
 
   // ----- Chore flow -----
-  const setChore = (id, up) => setS(s => ({ ...s, chores: s.chores.map(c => c.id === id ? { ...c, ...up } : c) }));
+  // Centrale patch-helper — alle klusje-statuswijzigingen (claim, foto's, afronden,
+  // afkeuren, checklist) lopen hierdoorheen, dus krijgen de cloud-sync in één keer mee.
+  const setChore = (id, up) => {
+    setS(s => ({ ...s, chores: s.chores.map(c => c.id === id ? { ...c, ...up } : c) }));
+    if (S.familyId && fam.backendConfigured) {
+      const values = {};
+      for (const [k, v] of Object.entries(up)) {
+        if (k === "by") values.claimed_by = v;
+        else if (k === "reason") values.reject_reason = v;
+        else if (k === "beforeUri") values.before_uri = v;
+        else if (k === "afterUri") values.after_uri = v;
+        else values[k] = v;
+      }
+      push.updateChore(id, values);
+    }
+  };
 
   // Voorwaarden: checklist afvinken en of alles klaar is
   const condChecklist = (c) => c.conditions?.checklist || [];
@@ -283,22 +320,32 @@ export default function App() {
   const approve = (c) => {
     boom();
     addFeed({ who: c.by, title: c.title, cents: c.cents, beforeUri: c.beforeUri, afterUri: c.afterUri });
+    const isKid = S.members[c.by]?.role === "kind";
     setS(s => {
       const chores = s.chores.filter(x => x.id !== c.id);
-      if (s.members[c.by].role === "kind") {
-        return { ...s, chores, pendingAlloc: { kid: c.by, cents: c.cents, title: c.title } };
+      if (isKid) {
+        return { ...s, chores, pendingAlloc: { kid: c.by, cents: c.cents, title: c.title, choreId: c.id } };
       }
       return { ...s, chores, balances: { ...s.balances, [c.by]: s.balances[c.by] + c.cents } };
     });
+    if (S.familyId && fam.backendConfigured) {
+      // Cloud-klusje krijgt status "approved", geen delete — anders verdwijnt de
+      // koppeling die ledger_entries.chore_id ernaar verwacht te kunnen leggen.
+      push.updateChore(c.id, { status: "approved" });
+      if (!isKid) push.addLedgerEntry(S.familyId, { member_id: c.by, cents: c.cents, kind: "chore_reward", chore_id: c.id });
+    }
   };
 
   const doReject = (id, reason) => { setChore(id, { status: "rejected", reason: reason || "Nog niet af" }); setRejectFor(null); };
 
   const allocate = (toGoal) => {
-    const { kid, cents } = S.pendingAlloc;
+    const { kid, cents, choreId } = S.pendingAlloc;
     if (toGoal && S.goals[kid]) {
       const g = S.goals[kid], newSaved = g.saved + cents;
       setS(s => ({ ...s, pendingAlloc: null, goals: { ...s.goals, [kid]: { ...g, saved: newSaved } } }));
+      // Naar een spaardoel: alleen goals.saved bijwerken, geen ledger-entry — die tabel
+      // is puur de kasstroom, saldo in een spaardoel is daar bewust los van.
+      if (S.familyId && fam.backendConfigured && g.id) push.updateGoal(g.id, { saved: newSaved });
       if (newSaved >= g.target) {
         boom();
         addFeed({ who: kid, badge: `🎉 SPAARDOEL BEREIKT: ${g.name}!` });
@@ -306,6 +353,9 @@ export default function App() {
       }
     } else {
       setS(s => ({ ...s, pendingAlloc: null, balances: { ...s.balances, [kid]: s.balances[kid] + cents } }));
+      if (S.familyId && fam.backendConfigured) {
+        push.addLedgerEntry(S.familyId, { member_id: kid, cents, kind: "chore_reward", chore_id: choreId || null });
+      }
     }
   };
 
@@ -313,14 +363,21 @@ export default function App() {
     alertX("Uitbetalen", `${fmt(S.balances[kid])} aan ${S.members[kid].name} uitbetaald (buiten de app)?`, [
       { text: "Annuleren", style: "cancel" },
       { text: "Ja, registreer", onPress: () => {
-          addFeed({ who: kid, badge: `💶 Zakgeld uitbetaald: ${fmt(S.balances[kid])}` });
+          const cents = S.balances[kid];
+          addFeed({ who: kid, badge: `💶 Zakgeld uitbetaald: ${fmt(cents)}` });
           setS(s => ({ ...s, balances: { ...s.balances, [kid]: 0 } }));
+          if (S.familyId && fam.backendConfigured && cents) {
+            push.addLedgerEntry(S.familyId, { member_id: kid, cents: -cents, kind: "payout" });
+          }
         } },
     ]);
   };
 
-  const approveGoal = (kid) =>
+  const approveGoal = (kid) => {
     setS(s => ({ ...s, goals: { ...s.goals, [kid]: { ...s.goals[kid], approved: true } } }));
+    const g = S.goals[kid];
+    if (S.familyId && fam.backendConfigured && g?.id) push.updateGoal(g.id, { approved: true });
+  };
 
   // ----- UI helpers -----
   const kids = Object.keys(S.members).filter(k => S.members[k].role === "kind");
@@ -1201,9 +1258,27 @@ export default function App() {
       </Modal>
 
       <AddChoreModal t={t} visible={choreModal} onClose={() => setChoreModal(false)}
-        onAdd={(chore) => { setS(s => ({ ...s, chores: [...s.chores, chore] })); setChoreModal(false); }} />
+        onAdd={(chore) => {
+          setS(s => ({ ...s, chores: [...s.chores, chore] }));
+          setChoreModal(false);
+          if (S.familyId && fam.backendConfigured) {
+            push.upsertChore(S.familyId, {
+              id: chore.id, title: chore.title, room: chore.room, emoji: chore.emoji, cents: chore.cents,
+              status: chore.status, claimed_by: chore.by, conditions: chore.conditions || null,
+            });
+          }
+        }} />
       <AddGoalModal t={t} visible={goalModal} onClose={() => setGoalModal(false)} pickImage={pickImage}
-        onAdd={(goal) => { setS(s => ({ ...s, goals: { ...s.goals, [me]: goal } })); setGoalModal(false); }} />
+        onAdd={(goal) => {
+          setS(s => ({ ...s, goals: { ...s.goals, [me]: goal } }));
+          setGoalModal(false);
+          if (S.familyId && fam.backendConfigured) {
+            push.upsertGoal(S.familyId, me, {
+              id: goal.id, name: goal.name, emoji: goal.emoji, image_uri: goal.imageUri,
+              target: goal.target, saved: goal.saved, link: goal.link, approved: goal.approved,
+            });
+          }
+        }} />
       <RejectModal t={t} choreId={rejectFor} onClose={() => setRejectFor(null)} onReject={doReject} />
       <AddKidModal t={t} visible={kidModal} onClose={() => setKidModal(false)} onAdd={addKid} />
       <AddParentModal t={t} visible={parentModal} onClose={() => setParentModal(false)} onAdd={addParent} />
@@ -1318,7 +1393,7 @@ function AddChoreModal({ t, visible, onClose, onAdd }) {
     const conditions = (note.trim() || checklist.length || photoReq || deadline.trim())
       ? { note: note.trim(), checklist, photoRequired: photoReq, deadline: deadline.trim() }
       : null;
-    onAdd({ id: Date.now(), title: title.trim(), room: room.trim() || "Huis", emoji: "🧽", cents, status: "open", by: null, conditions });
+    onAdd({ id: uid(), title: title.trim(), room: room.trim() || "Huis", emoji: "🧽", cents, status: "open", by: null, conditions });
     setTitle(""); setRoom(""); setEuros(""); setNote(""); setChecklistText(""); setDeadline(""); setPhotoReq(false);
   };
   return (
@@ -1358,7 +1433,7 @@ function AddGoalModal({ t, visible, onClose, onAdd, pickImage }) {
   const submit = () => {
     const target = Math.round(parseFloat(euros.replace(",", ".")) * 100);
     if (!name.trim() || !target || target <= 0) { alertX("Vul een naam en een geldig doelbedrag in"); return; }
-    onAdd({ name: name.trim(), emoji: "🎁", imageUri: uri, target, saved: 0, link: "", approved: false });
+    onAdd({ id: uid(), name: name.trim(), emoji: "🎁", imageUri: uri, target, saved: 0, link: "", approved: false });
     setName(""); setEuros(""); setUri(null);
   };
   return (
@@ -1611,11 +1686,11 @@ function WelcomeWizard({ t, onComplete }) {
   const finish = () => {
     if (!parentName.trim()) { alertX("Vul jouw naam in"); return; }
     const members = {}; const balances = {};
-    const parentKey = `${parentName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}`;
+    const parentKey = uid();
     members[parentKey] = { name: parentName.trim(), avatar: parentAvatar, age: null, role: "ouder", streak: 0, color: "#7C3AED" };
     balances[parentKey] = 0;
     kids.forEach((k, i) => {
-      const key = `${k.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}-${i}`;
+      const key = uid();
       members[key] = { name: k.name, avatar: k.avatar, age: k.age, role: "kind", streak: 0, color: KID_COLORS[i % KID_COLORS.length] };
       balances[key] = 0;
     });
