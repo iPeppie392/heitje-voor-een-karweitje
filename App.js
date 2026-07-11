@@ -18,6 +18,7 @@ import { useFamily } from "./src/useFamily";
 import { supabase } from "./src/supabase";
 import { push, pullFamilyState } from "./src/sync";
 import { uid } from "./src/id";
+import { registerForPushToken, sendPushNotification } from "./src/notifications";
 import FamilySetup from "./src/screens/FamilySetup";
 
 const FREE_CHORE_LIMIT = 5; // free tier: max active chores (premium: unlimited)
@@ -101,6 +102,17 @@ export default function App() {
   useEffect(() => {
     if (me && !S.members[me]) setMe(null);
   }, [me, S.members]);
+
+  // Pushmeldingen: dit toestel registreren bij het actieve profiel, zodat andere
+  // gezinsleden een melding kunnen sturen. Geeft stil `null` terug op web, in een
+  // simulator, zonder toestemming, of zolang er nog geen EAS-project gekoppeld is —
+  // zie src/notifications.js.
+  useEffect(() => {
+    if (!me || !S.familyId || !fam.backendConfigured) return;
+    registerForPushToken().then(token => {
+      if (token && token !== S.members[me]?.push_token) push.updateMember(me, { push_token: token });
+    });
+  }, [me, S.familyId, fam.backendConfigured]);
 
   // Profiel kiezen op de inlogpagina — onthoudt de keuze voor de volgende keer
   const pick = (k) => { setMe(k); patch({ lastMe: k }); };
@@ -297,6 +309,18 @@ export default function App() {
       }
       push.updateChore(id, values);
     }
+    // Klusje klaar gemeld — elke ouder met een pushtoken een melding sturen dat er
+    // iets op ze wacht (dekt zowel submitNoPhoto als photoAfter, die allebei hier
+    // doorheen lopen).
+    if (up.status === "waiting") {
+      const chore = S.chores.find(c => c.id === id);
+      for (const parent of Object.values(S.members).filter(m => m.role === "ouder")) {
+        if (parent.push_token) {
+          sendPushNotification(parent.push_token, "Klusje wacht op goedkeuring",
+            `${chore?.title || "Een klusje"} is klaar gemeld.`, { choreId: id });
+        }
+      }
+    }
   };
 
   // Voorwaarden: checklist afvinken en of alles klaar is
@@ -332,6 +356,11 @@ export default function App() {
     const isKid = S.members[c.by]?.role === "kind";
     if (isKid) {
       setChore(c.id, { status: "approved" });
+      const kid = S.members[c.by];
+      if (kid?.push_token) {
+        sendPushNotification(kid.push_token, "Goedgekeurd! 🎉",
+          `"${c.title}" is goedgekeurd — kies sparen of saldo.`, { choreId: c.id });
+      }
     } else {
       // Ouders verdienen normaal geen zakgeld (UI blokkeert dit al) — dit pad is
       // defensief, geen keuze-moment nodig, dus meteen als "allocated" afronden.
@@ -343,7 +372,16 @@ export default function App() {
     }
   };
 
-  const doReject = (id, reason) => { setChore(id, { status: "rejected", reason: reason || "Nog niet af" }); setRejectFor(null); };
+  const doReject = (id, reason) => {
+    const c = S.chores.find(x => x.id === id);
+    setChore(id, { status: "rejected", reason: reason || "Nog niet af" });
+    setRejectFor(null);
+    const kid = c ? S.members[c.by] : null;
+    if (kid?.push_token) {
+      sendPushNotification(kid.push_token, "Nog niet goedgekeurd",
+        reason || "Nog niet af — probeer het opnieuw.", { choreId: id });
+    }
+  };
 
   // Het klusje (van wie dan ook, op welk toestel dan ook) dat op de keuze sparen/saldo
   // wacht — vervangt het oude lokale-only S.pendingAlloc.
@@ -400,6 +438,11 @@ export default function App() {
     setS(s => ({ ...s, goals: { ...s.goals, [kid]: { ...s.goals[kid], approved: true } } }));
     const g = S.goals[kid];
     if (S.familyId && fam.backendConfigured && g?.id) push.updateGoal(g.id, { approved: true });
+    const member = S.members[kid];
+    if (member?.push_token && g) {
+      sendPushNotification(member.push_token, "Spaardoel goedgekeurd! 🐷",
+        `De winkellink voor "${g.name}" staat nu open.`, { goalId: g.id });
+    }
   };
 
   // ----- UI helpers -----

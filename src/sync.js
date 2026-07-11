@@ -14,7 +14,7 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, balances, 
   for (const m of activeMembers) {
     membersById[m.id] = {
       name: m.name, avatar: m.avatar, age: m.age, role: m.role,
-      streak: m.streak, color: m.color,
+      streak: m.streak, color: m.color, push_token: m.push_token ?? null,
     };
   }
 
