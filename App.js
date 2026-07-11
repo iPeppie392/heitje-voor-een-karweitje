@@ -15,7 +15,6 @@ import Slider from "@react-native-community/slider";
 import { loadState, saveState, resetState, DEFAULT_STATE, DEFAULT_MEMBERS } from "./src/store";
 import { Card, Btn, Chip, Amount, PhotoBox, Ring, JuniorBar, Confetti, AdSlot } from "./src/components";
 import { useFamily } from "./src/useFamily";
-import { supabase } from "./src/supabase";
 import { push, pullFamilyState } from "./src/sync";
 import { uid } from "./src/id";
 import { registerForPushToken, sendPushNotification } from "./src/notifications";
@@ -53,6 +52,7 @@ export default function App() {
   const [confetti, setConfetti] = useState(false);
   const [choreModal, setChoreModal] = useState(false);
   const [goalModal, setGoalModal] = useState(false);
+  const [homeworkModal, setHomeworkModal] = useState(false);
   const [rejectFor, setRejectFor] = useState(null); // chore id being rejected
   const [familySetupOpen, setFamilySetupOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState(null);
@@ -157,6 +157,7 @@ export default function App() {
       { icon: "📝", title: "Voorwaarden & checklist", body: "Een ouder kan bij het aanmaken van een klusje een checklist, een deadline en een notitie toevoegen. Het kind moet alle punten afvinken voordat het klusje afgerond kan worden." },
       { icon: "🧐", title: "Goedkeuren & afkeuren", body: "Alleen ouders keuren klusjes goed of af. Bij afkeuren moet je altijd een reden opgeven, zodat het kind weet wat er nog moet gebeuren." },
       { icon: "🐷", title: "Sparen", body: "Elk kind kan één spaardoel instellen met een naam, bedrag en optioneel een foto. Een ouder moet het doel eerst goedkeuren voordat de winkellink aanklikbaar wordt (ouderlijke poort)." },
+      { icon: "📚", title: "Huiswerk", body: "Een agenda per gezinslid. Standaard puur een planner — zonder zakgeld. Een ouder kan bij Instellingen zakgeld voor huiswerk aanzetten en dan per taak zelf een beloning instellen; kinderen krijgen daar zelf geen invoerveld voor." },
       { icon: "💰", title: "Zakgeld & uitbetalen", body: "De app rekent alleen in cijfers — er gaat nooit echt geld door de app. Zodra je je kind fysiek hebt uitbetaald (contant, tikkie, etc.), registreer je dat bij Gezin → 'Uitbetaald — registreer'." },
       { icon: "👨‍👩‍👧‍👦", title: "Ouders verdienen geen zakgeld", body: "Ouders maken en beheren klusjes, maar kunnen ze niet zelf claimen of uitvoeren — alleen kinderen verdienen zakgeld." },
       { icon: "👶", title: "Nieuw kind toevoegen", body: "Bij Gezin → '👶 Nieuw kind' vul je een naam, avatar en geboortedatum in (dag, maand, jaar). De geboortedatum wordt alleen gebruikt om de leeftijd te berekenen en daarna nergens opgeslagen." },
@@ -442,6 +443,53 @@ export default function App() {
     if (member?.push_token && g) {
       sendPushNotification(member.push_token, "Spaardoel goedgekeurd! 🐷",
         `De winkellink voor "${g.name}" staat nu open.`, { goalId: g.id });
+    }
+  };
+
+  // ----- Huiswerk -----
+  const addHomework = (item) => {
+    setS(s => ({ ...s, homework: [...s.homework, item] }));
+    setHomeworkModal(false);
+    if (S.familyId && fam.backendConfigured) {
+      push.upsertHomework(S.familyId, {
+        id: item.id, member_id: item.memberId, title: item.title, subject: item.subject || null,
+        due_date: item.dueDate, done: false, cents: item.cents ?? null,
+      });
+    }
+  };
+
+  const toggleHomeworkDone = (h) => {
+    const done = !h.done;
+    setS(s => ({ ...s, homework: s.homework.map(x => x.id === h.id ? { ...x, done } : x) }));
+    if (S.familyId && fam.backendConfigured) push.updateHomework(h.id, { done });
+    // Alleen een melding sturen als er een beloning aan hangt en het net is afgevinkt —
+    // anders krijgen ouders bij elk kaal huiswerk-vinkje een melding.
+    if (done && h.cents) {
+      for (const parent of Object.values(S.members).filter(m => m.role === "ouder")) {
+        if (parent.push_token) {
+          sendPushNotification(parent.push_token, "Huiswerk wacht op goedkeuring",
+            `${h.title} is afgerond.`, { homeworkId: h.id });
+        }
+      }
+    }
+  };
+
+  // Geen sparen/saldo-keuze zoals bij klusjes — huiswerkgeld gaat direct naar het saldo,
+  // bewust een kleinere stap dan de klusjes-flow.
+  const approveHomeworkReward = (h) => {
+    setS(s => ({
+      ...s,
+      homework: s.homework.map(x => x.id === h.id ? { ...x, rewardApproved: true } : x),
+      balances: { ...s.balances, [h.memberId]: s.balances[h.memberId] + h.cents },
+    }));
+    if (S.familyId && fam.backendConfigured) {
+      push.updateHomework(h.id, { reward_approved: true });
+      push.addLedgerEntry(S.familyId, { member_id: h.memberId, cents: h.cents, kind: "homework_reward", note: `Huiswerk: ${h.title}` });
+    }
+    const member = S.members[h.memberId];
+    if (member?.push_token) {
+      sendPushNotification(member.push_token, "Huiswerkgeld goedgekeurd! 🎉",
+        `${fmt(h.cents)} voor "${h.title}" staat op je saldo.`, { homeworkId: h.id });
     }
   };
 
@@ -979,6 +1027,79 @@ export default function App() {
     </>
   );
 
+  // ----- Huiswerk -----
+  const WEEKDAY_LABELS = ["Zo", "Ma", "Di", "Wo", "Do", "Vr", "Za"];
+  const formatDueDate = (dateStr) => {
+    const d = new Date(dateStr + "T00:00:00");
+    return `${WEEKDAY_LABELS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
+  };
+
+  const HomeworkCard = ({ h }) => {
+    const m = S.members[h.memberId];
+    const mine = h.memberId === me;
+    const canToggle = role === "ouder" || mine;
+    return (
+      <Card t={t} style={{ marginBottom: 10 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <TouchableOpacity disabled={!canToggle} onPress={() => toggleHomeworkDone(h)}
+            style={{ width: 26, height: 26, borderRadius: 8, borderWidth: 2,
+              borderColor: h.done ? t.green : t.line, backgroundColor: h.done ? t.green : "transparent",
+              alignItems: "center", justifyContent: "center" }}>
+            {h.done ? <Text style={{ color: "#fff", fontWeight: "900" }}>✓</Text> : null}
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink, textDecorationLine: h.done ? "line-through" : "none" }}>
+              {h.title}</Text>
+            <Text style={{ fontSize: 12, color: t.sub }}>
+              {h.subject ? `${h.subject} · ` : ""}{formatDueDate(h.dueDate)}{role === "ouder" && !mine ? ` · ${m?.name || ""}` : ""}</Text>
+          </View>
+          {h.cents ? <Amount t={t} size={16}>{fmt(h.cents)}</Amount> : null}
+        </View>
+        {h.cents && h.done && !h.rewardApproved && role === "ouder" ? (
+          <View style={{ marginTop: 10 }}>
+            <Btn t={t} small kind="success" onPress={() => approveHomeworkReward(h)}>Goedkeuren ✓</Btn>
+          </View>
+        ) : h.cents && h.done && !h.rewardApproved ? (
+          <View style={{ marginTop: 8 }}><Chip t={t} color={t.amber}>⏳ Wacht op goedkeuring</Chip></View>
+        ) : h.cents && !h.done ? (
+          <View style={{ marginTop: 8 }}><Chip t={t} color={t.amber}>💰 Verdien {fmt(h.cents)} zodra het af is</Chip></View>
+        ) : h.cents && h.rewardApproved ? (
+          <View style={{ marginTop: 8 }}><Chip t={t}>✅ {fmt(h.cents)} toegekend</Chip></View>
+        ) : null}
+      </Card>
+    );
+  };
+
+  const Huiswerk = () => {
+    const sorted = [...S.homework].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    const mine = sorted.filter(h => h.memberId === me);
+    const others = sorted.filter(h => h.memberId !== me);
+    return (
+      <>
+        <Btn t={t} kind="ghost" onPress={() => setHomeworkModal(true)}>＋ Huiswerk toevoegen</Btn>
+        <View style={{ height: 12 }} />
+        {role === "kind" ? (
+          <>
+            {mine.length ? mine.map(h => <HomeworkCard key={h.id} h={h} />) : (
+              <Text style={{ fontSize: 13, color: t.sub, marginBottom: 12 }}>Nog geen huiswerk gepland. 📚</Text>
+            )}
+          </>
+        ) : (
+          <>
+            <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>HUISWERK VAN DE KINDEREN</Text>
+            {[...mine, ...others].length ? [...mine, ...others].map(h => <HomeworkCard key={h.id} h={h} />) : (
+              <Text style={{ fontSize: 13, color: t.sub, marginBottom: 12 }}>Nog geen huiswerk gepland.</Text>
+            )}
+          </>
+        )}
+        <Text style={{ fontSize: 12, color: t.sub, paddingVertical: 12 }}>
+          {S.homeworkRewardsEnabled
+            ? "Een ouder kan per taak een beloning instellen — dat zie je hier zodra het is toegevoegd."
+            : "Puur een agenda — zakgeld voor huiswerk kan een ouder aanzetten bij Instellingen."}</Text>
+      </>
+    );
+  };
+
   const Gezin = () => (
     <>
       {role === "ouder" ? (
@@ -1077,7 +1198,7 @@ export default function App() {
           <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 10 }}>💱 Gezinsvaluta</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             {["€", "£", "$"].map(c => (
-              <TouchableOpacity key={c} onPress={() => { patch({ cur: c }); if (S.familyId) supabase.from("families").update({ currency: c }).eq("id", S.familyId).then(() => {}); }} style={{ flex: 1, borderRadius: 12,
+              <TouchableOpacity key={c} onPress={() => { patch({ cur: c }); if (S.familyId && fam.backendConfigured) push.updateFamily(S.familyId, { currency: c }); }} style={{ flex: 1, borderRadius: 12,
                 paddingVertical: 12, alignItems: "center", backgroundColor: S.cur === c ? t.accent : t.soft }}>
                 <Text style={{ fontSize: 18, fontWeight: "800", color: S.cur === c ? "#fff" : t.ink }}>{c}</Text>
               </TouchableOpacity>
@@ -1164,6 +1285,24 @@ export default function App() {
         </View>
       </Card>
 
+      <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>🎓 Zakgeld voor huiswerk</Text>
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+          Staat dit uit, dan is Huiswerk puur een agenda. Zet je 'm aan, dan kun je zelf per taak
+          een beloning instellen — kinderen zien dat pas als jij het invult, en krijgen er zelf
+          geen invoerveld voor.</Text>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Btn t={t} small kind={S.homeworkRewardsEnabled ? "primary" : "ghost"} onPress={() => {
+            patch({ homeworkRewardsEnabled: true });
+            if (S.familyId && fam.backendConfigured) push.updateFamily(S.familyId, { homework_rewards_enabled: true });
+          }}>Aan</Btn>
+          <Btn t={t} small kind={!S.homeworkRewardsEnabled ? "primary" : "ghost"} onPress={() => {
+            patch({ homeworkRewardsEnabled: false });
+            if (S.familyId && fam.backendConfigured) push.updateFamily(S.familyId, { homework_rewards_enabled: false });
+          }}>Uit</Btn>
+        </View>
+      </Card>
+
       {!S.premiumUnlocked ? (
         <Card t={t} style={{ marginBottom: 12 }}>
           <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>📢 Reclame</Text>
@@ -1217,6 +1356,7 @@ export default function App() {
     { id: "feed", label: "Home", icon: "🏠", C: Feed },
     { id: "klusjes", label: "Klusjes", icon: "✅", C: Chores },
     { id: "sparen", label: "Sparen", icon: "🐷", C: Sparen },
+    { id: "huiswerk", label: "Huiswerk", icon: "📚", C: Huiswerk },
     { id: "gezin", label: "Gezin", icon: "👨‍👩‍👧‍👦", C: Gezin },
     { id: "instellingen", label: "Instellingen", icon: "⚙️", C: Instellingen, ouderOnly: true },
   ];
@@ -1350,6 +1490,9 @@ export default function App() {
             });
           }
         }} />
+      <AddHomeworkModal t={t} visible={homeworkModal} onClose={() => setHomeworkModal(false)}
+        role={role} me={me} kids={kids} members={S.members} rewardsEnabled={S.homeworkRewardsEnabled}
+        onAdd={addHomework} />
       <RejectModal t={t} choreId={rejectFor} onClose={() => setRejectFor(null)} onReject={doReject} />
       <AddKidModal t={t} visible={kidModal} onClose={() => setKidModal(false)} onAdd={addKid} />
       <AddParentModal t={t} visible={parentModal} onClose={() => setParentModal(false)} onAdd={addParent} />
@@ -1518,6 +1661,70 @@ function AddGoalModal({ t, visible, onClose, onAdd, pickImage }) {
           {uri ? "🖼️ Foto gekozen ✓ (tik om te wijzigen)" : "🖼️ Kies een foto (optioneel)"}</Btn>
       </View>
       <Btn t={t} onPress={submit}>Aanmaken — papa/mama keurt goed</Btn>
+    </Sheet>
+  );
+}
+
+function AddHomeworkModal({ t, visible, onClose, onAdd, role, me, kids, members, rewardsEnabled }) {
+  const [title, setTitle] = useState("");
+  const [subject, setSubject] = useState("");
+  const [day, setDay] = useState("");
+  const [month, setMonth] = useState("");
+  const [year, setYear] = useState("");
+  const [euros, setEuros] = useState("");
+  const [forKid, setForKid] = useState(role === "ouder" ? (kids[0] || null) : me);
+  const submit = () => {
+    if (!title.trim()) { alertX("Vul een titel in"); return; }
+    const memberId = role === "ouder" ? forKid : me;
+    if (!memberId) { alertX("Kies voor welk kind dit huiswerk is"); return; }
+    const now = new Date();
+    const y = parseInt(year, 10) || now.getFullYear();
+    const m = parseInt(month, 10) || (now.getMonth() + 1);
+    const d = parseInt(day, 10) || now.getDate();
+    const dueDate = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    // Het beloningsveld bestaat hier alleen als er iets ingevuld is EN de invoerder een
+    // ouder is met de schakelaar aan — een kind ziet dit veld nooit, ook niet als de
+    // schakelaar aan staat (zie CLAUDE.md-eis: discreet, door de ouder bepaald).
+    let cents = null;
+    if (role === "ouder" && rewardsEnabled && euros.trim()) {
+      const parsed = Math.round(parseFloat(euros.replace(",", ".")) * 100);
+      if (parsed > 0) cents = parsed;
+    }
+    onAdd({ id: uid(), memberId, title: title.trim(), subject: subject.trim() || null, dueDate, done: false, cents, rewardApproved: false });
+    setTitle(""); setSubject(""); setDay(""); setMonth(""); setYear(""); setEuros("");
+  };
+  return (
+    <Sheet t={t} visible={visible} onClose={onClose} title="📚 Nieuw huiswerk">
+      {role === "ouder" && kids.length > 1 ? (
+        <View style={{ flexDirection: "row", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+          {kids.map(k => (
+            <TouchableOpacity key={k} onPress={() => setForKid(k)} style={{ paddingHorizontal: 12, paddingVertical: 8,
+              borderRadius: 999, backgroundColor: forKid === k ? t.accent : t.soft }}>
+              <Text style={{ color: forKid === k ? "#fff" : t.ink, fontWeight: "700", fontSize: 13 }}>
+                {members[k]?.avatar} {members[k]?.name}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : null}
+      <TextInput style={inputStyle(t)} placeholder="Titel (bijv. Rekenen blz. 24)" placeholderTextColor={t.sub}
+        value={title} onChangeText={setTitle} />
+      <TextInput style={inputStyle(t)} placeholder="Vak (optioneel)" placeholderTextColor={t.sub}
+        value={subject} onChangeText={setSubject} />
+      <Text style={{ fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: t.sub, marginTop: 4, marginBottom: 8 }}>
+        VOOR WANNEER (leeg = vandaag)</Text>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <TextInput style={[inputStyle(t), { flex: 1 }]} placeholder="Dag" placeholderTextColor={t.sub}
+          keyboardType="number-pad" value={day} onChangeText={setDay} />
+        <TextInput style={[inputStyle(t), { flex: 1 }]} placeholder="Maand" placeholderTextColor={t.sub}
+          keyboardType="number-pad" value={month} onChangeText={setMonth} />
+        <TextInput style={[inputStyle(t), { flex: 1 }]} placeholder="Jaar" placeholderTextColor={t.sub}
+          keyboardType="number-pad" value={year} onChangeText={setYear} />
+      </View>
+      {role === "ouder" && rewardsEnabled ? (
+        <TextInput style={inputStyle(t)} placeholder="Beloning (optioneel, bijv. 1,00)" placeholderTextColor={t.sub}
+          keyboardType="decimal-pad" value={euros} onChangeText={setEuros} />
+      ) : null}
+      <Btn t={t} onPress={submit}>Toevoegen</Btn>
     </Sheet>
   );
 }

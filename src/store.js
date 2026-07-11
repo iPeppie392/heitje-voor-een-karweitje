@@ -28,6 +28,8 @@ export const DEFAULT_STATE = {
     daan: { id: uid(), name: "Nintendo-game", emoji: "🎮", imageUri: null, target: 5999, saved: 0, link: "", approved: false },
   },
   feed: [],
+  homework: [],                    // huiswerk-items, per gezinslid (memberId-veld erin)
+  homeworkRewardsEnabled: false,   // ouder-schakelaar, standaard UIT — zie CLAUDE.md-eis
   lastMe: null,       // laatst gekozen profiel op dit toestel → automatisch inloggen
   setupDone: false,   // heeft dit toestel de welkom-wizard (echte namen invoeren) al doorlopen?
 

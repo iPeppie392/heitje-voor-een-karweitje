@@ -4,7 +4,7 @@ import { supabase } from "./supabase";
 const QUEUE_KEY = "heitje-pending-writes-v1";
 
 // ---- Vertaling: Supabase-rijen -> dezelfde vorm die App.js al gebruikt ----
-export function rowsToLocalShape({ members, chores, goals, feedPosts, balances, family }) {
+export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkItems, balances, family }) {
   // Verwijderde gezinsleden worden nooit hard gewist (dat zou hun hele zakgeld-
   // geschiedenis meeslepen via de foreign keys) — alleen gemarkeerd als "archived".
   // Die horen hier nergens meer in de lokale state te verschijnen.
@@ -49,25 +49,38 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, balances, 
     rx: f.rx, time: f.created_at,
   }));
 
+  // Huiswerk: kale doorgave, geen filtering — "af + beloning toegekend" is een normale
+  // eindstatus van een planner-item (het hoort in de agenda te blijven staan), anders dan
+  // een afgehandeld klusje dat nergens meer hoeft te verschijnen.
+  const homeworkOut = (homeworkItems || []).map((h) => ({
+    id: h.id, memberId: h.member_id, title: h.title, subject: h.subject,
+    dueDate: h.due_date, done: h.done, cents: h.cents, rewardApproved: h.reward_approved,
+  }));
+
   return {
     members: membersById, balances: balancesById, chores: choresOut, goals: goalsById, feed: feedOut,
-    cur: family?.currency, premiumUnlocked: !!family?.premium_unlocked,
+    homework: homeworkOut, cur: family?.currency, premiumUnlocked: !!family?.premium_unlocked,
+    homeworkRewardsEnabled: !!family?.homework_rewards_enabled,
   };
 }
 
 export async function pullFamilyState(familyId) {
-  const [members, chores, goals, feedPosts, balances, family] = await Promise.all([
+  const [members, chores, goals, feedPosts, homeworkItems, balances, family] = await Promise.all([
     supabase.from("members").select("*").eq("family_id", familyId),
     supabase.from("chores").select("*").eq("family_id", familyId),
     supabase.from("goals").select("*").eq("family_id", familyId),
     supabase.from("feed_posts").select("*").eq("family_id", familyId).order("created_at", { ascending: false }).limit(200),
+    supabase.from("homework_items").select("*").eq("family_id", familyId),
     supabase.from("member_balances").select("*").eq("family_id", familyId),
     supabase.from("families").select("*").eq("id", familyId).single(),
   ]);
   for (const r of [members, chores, goals, feedPosts, balances, family]) if (r.error) throw r.error;
+  // homework_items bestaat pas zodra sql/005_homework.sql gedraaid is — tot die
+  // migratie gedraaid is, mag een ontbrekende tabel de rest van de sync niet breken.
   return rowsToLocalShape({
     members: members.data, chores: chores.data, goals: goals.data,
-    feedPosts: feedPosts.data, balances: balances.data, family: family.data,
+    feedPosts: feedPosts.data, homeworkItems: homeworkItems.error ? [] : homeworkItems.data,
+    balances: balances.data, family: family.data,
   });
 }
 
@@ -79,6 +92,8 @@ export function subscribeFamilyRealtime(familyId, onChange) {
     .on("postgres_changes", { event: "*", schema: "public", table: "members", filter: `family_id=eq.${familyId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "ledger_entries", filter: `family_id=eq.${familyId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "feed_posts", filter: `family_id=eq.${familyId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "homework_items", filter: `family_id=eq.${familyId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "families", filter: `id=eq.${familyId}` }, onChange)
     .subscribe();
   return () => supabase.removeChannel(channel);
 }
@@ -114,6 +129,9 @@ export const push = {
   updateFeedPost: (id, values) => run("feed_posts", "update", { values, match: { id } }),
   upsertMember: (familyId, member) => run("members", "insert", { family_id: familyId, ...member }),
   updateMember: (id, values) => run("members", "update", { values, match: { id } }),
+  upsertHomework: (familyId, item) => run("homework_items", "insert", { family_id: familyId, ...item }),
+  updateHomework: (id, values) => run("homework_items", "update", { values, match: { id } }),
+  updateFamily: (id, values) => run("families", "update", { values, match: { id } }),
 };
 
 export async function flushPendingWrites() {

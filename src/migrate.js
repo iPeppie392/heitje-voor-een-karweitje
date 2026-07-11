@@ -57,5 +57,19 @@ export async function migrateLocalStateToFamily(localState, familyId, newParentM
     });
   }
 
+  for (const h of localState.homework || []) {
+    const memberId = idMap[h.memberId];
+    if (!memberId) continue;
+    await supabase.from("homework_items").insert({
+      family_id: familyId, member_id: memberId, title: h.title, subject: h.subject || null,
+      due_date: h.dueDate, done: h.done, cents: h.cents ?? null, reward_approved: h.rewardApproved || false,
+    });
+  }
+  // Alleen bijwerken als het toestel de schakelaar al had aanstaan — anders blijft de
+  // nieuwe families-rij gewoon op zijn eigen standaard (uit).
+  if (localState.homeworkRewardsEnabled) {
+    await supabase.from("families").update({ homework_rewards_enabled: true }).eq("id", familyId);
+  }
+
   return idMap;
 }
