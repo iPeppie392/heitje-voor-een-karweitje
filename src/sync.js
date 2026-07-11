@@ -5,8 +5,13 @@ const QUEUE_KEY = "heitje-pending-writes-v1";
 
 // ---- Vertaling: Supabase-rijen -> dezelfde vorm die App.js al gebruikt ----
 export function rowsToLocalShape({ members, chores, goals, feedPosts, balances, family }) {
+  // Verwijderde gezinsleden worden nooit hard gewist (dat zou hun hele zakgeld-
+  // geschiedenis meeslepen via de foreign keys) — alleen gemarkeerd als "archived".
+  // Die horen hier nergens meer in de lokale state te verschijnen.
+  const activeMembers = members.filter((m) => !m.archived);
+
   const membersById = {};
-  for (const m of members) {
+  for (const m of activeMembers) {
     membersById[m.id] = {
       name: m.name, avatar: m.avatar, age: m.age, role: m.role,
       streak: m.streak, color: m.color,
@@ -14,15 +19,21 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, balances, 
   }
 
   const balancesById = {};
-  for (const m of members) balancesById[m.id] = 0;
-  for (const b of balances) balancesById[b.member_id] = b.balance_cents;
+  for (const m of activeMembers) balancesById[m.id] = 0;
+  for (const b of balances) if (b.member_id in balancesById) balancesById[b.member_id] = b.balance_cents;
 
-  const choresOut = chores.map((c) => ({
-    id: c.id, title: c.title, room: c.room, emoji: c.emoji, cents: c.cents,
-    status: c.status, by: c.claimed_by, conditions: c.conditions,
-    checked: c.checked, beforeUri: c.before_uri, afterUri: c.after_uri,
-    reason: c.reject_reason,
-  }));
+  // Een goedgekeurd klusje waarvan het kind al gekozen heeft (sparen/saldo) is
+  // helemaal afgerond — hoeft nergens in de app nog te verschijnen. Klusjes die nog
+  // op die keuze wachten (approved, nog niet allocated) blijven wel staan, zodat het
+  // kind de keuze op ELK toestel kan afronden.
+  const choresOut = chores
+    .filter((c) => !(c.status === "approved" && c.allocated))
+    .map((c) => ({
+      id: c.id, title: c.title, room: c.room, emoji: c.emoji, cents: c.cents,
+      status: c.status, by: c.claimed_by, conditions: c.conditions,
+      checked: c.checked, beforeUri: c.before_uri, afterUri: c.after_uri,
+      reason: c.reject_reason, allocated: c.allocated,
+    }));
 
   const goalsById = {};
   for (const g of goals) {

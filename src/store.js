@@ -28,7 +28,6 @@ export const DEFAULT_STATE = {
     daan: { id: uid(), name: "Nintendo-game", emoji: "🎮", imageUri: null, target: 5999, saved: 0, link: "", approved: false },
   },
   feed: [],
-  pendingAlloc: null, // { kid, cents, title }
   lastMe: null,       // laatst gekozen profiel op dit toestel → automatisch inloggen
   setupDone: false,   // heeft dit toestel de welkom-wizard (echte namen invoeren) al doorlopen?
 
@@ -57,7 +56,14 @@ export async function loadState() {
   try {
     const raw = await AsyncStorage.getItem(KEY);
     if (!raw) return DEFAULT_STATE;
-    return { ...DEFAULT_STATE, ...JSON.parse(raw) };
+    const state = { ...DEFAULT_STATE, ...JSON.parse(raw) };
+    // Toestellen die dit spaardoel al vóór de invoering van `id` lokaal hadden staan
+    // (nooit hersynct via de wizard of AddGoalModal, die `id` allebei altijd zetten)
+    // zouden anders voorgoed een id-loos doel houden — en cloud-sync ervan negeren.
+    for (const key of Object.keys(state.goals || {})) {
+      if (!state.goals[key].id) state.goals[key] = { ...state.goals[key], id: uid() };
+    }
+    return state;
   } catch {
     return DEFAULT_STATE;
   }

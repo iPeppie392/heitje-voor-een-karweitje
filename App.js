@@ -216,6 +216,10 @@ export default function App() {
           const chores = s.chores.map(c => c.by === key ? { ...c, status: "open", by: null } : c);
           return { ...s, members, balances, goals, chores };
         });
+        // Niet hard verwijderen in de cloud — dat zou via de foreign keys ook de hele
+        // zakgeld-geschiedenis van dit lid wegvagen. Alleen "archived" markeren, zodat
+        // een volgende pull dit lid niet stiekem weer lokaal terugzet.
+        if (S.familyId && fam.backendConfigured) push.updateMember(key, { archived: true });
       } },
     ]);
   };
@@ -317,44 +321,56 @@ export default function App() {
   // Klaar melden zonder foto — foto's zijn optioneel geworden
   const submitNoPhoto = (c) => setChore(c.id, { status: "waiting" });
 
+  // Een klusje van een kind blijft na goedkeuring op status "approved" staan totdat
+  // het kind kiest sparen/saldo (allocate hieronder) — bewust GEEN lokaal-only
+  // pendingAlloc meer: dat veld synchroniseerde nooit naar de cloud, dus op een ander
+  // toestel dan waar goedgekeurd werd, kwam het verdiende bedrag nergens terecht. Door
+  // dit aan het klusje zelf te hangen (dat al wél synct) werkt de keuze op elk toestel.
   const approve = (c) => {
     boom();
     addFeed({ who: c.by, title: c.title, cents: c.cents, beforeUri: c.beforeUri, afterUri: c.afterUri });
     const isKid = S.members[c.by]?.role === "kind";
-    setS(s => {
-      const chores = s.chores.filter(x => x.id !== c.id);
-      if (isKid) {
-        return { ...s, chores, pendingAlloc: { kid: c.by, cents: c.cents, title: c.title, choreId: c.id } };
+    if (isKid) {
+      setChore(c.id, { status: "approved" });
+    } else {
+      // Ouders verdienen normaal geen zakgeld (UI blokkeert dit al) — dit pad is
+      // defensief, geen keuze-moment nodig, dus meteen als "allocated" afronden.
+      setS(s => ({ ...s, chores: s.chores.filter(x => x.id !== c.id), balances: { ...s.balances, [c.by]: s.balances[c.by] + c.cents } }));
+      if (S.familyId && fam.backendConfigured) {
+        push.updateChore(c.id, { status: "approved", allocated: true });
+        push.addLedgerEntry(S.familyId, { member_id: c.by, cents: c.cents, kind: "chore_reward", chore_id: c.id });
       }
-      return { ...s, chores, balances: { ...s.balances, [c.by]: s.balances[c.by] + c.cents } };
-    });
-    if (S.familyId && fam.backendConfigured) {
-      // Cloud-klusje krijgt status "approved", geen delete — anders verdwijnt de
-      // koppeling die ledger_entries.chore_id ernaar verwacht te kunnen leggen.
-      push.updateChore(c.id, { status: "approved" });
-      if (!isKid) push.addLedgerEntry(S.familyId, { member_id: c.by, cents: c.cents, kind: "chore_reward", chore_id: c.id });
     }
   };
 
   const doReject = (id, reason) => { setChore(id, { status: "rejected", reason: reason || "Nog niet af" }); setRejectFor(null); };
 
+  // Het klusje (van wie dan ook, op welk toestel dan ook) dat op de keuze sparen/saldo
+  // wacht — vervangt het oude lokale-only S.pendingAlloc.
+  const awaitingAllocation = S.chores.find(c => c.by === me && c.status === "approved" && !c.allocated);
+
   const allocate = (toGoal) => {
-    const { kid, cents, choreId } = S.pendingAlloc;
+    if (!awaitingAllocation) return;
+    const { id: choreId, by: kid, cents, title } = awaitingAllocation;
     if (toGoal && S.goals[kid]) {
       const g = S.goals[kid], newSaved = g.saved + cents;
-      setS(s => ({ ...s, pendingAlloc: null, goals: { ...s.goals, [kid]: { ...g, saved: newSaved } } }));
+      setS(s => ({ ...s, goals: { ...s.goals, [kid]: { ...g, saved: newSaved } }, chores: s.chores.filter(x => x.id !== choreId) }));
       // Naar een spaardoel: alleen goals.saved bijwerken, geen ledger-entry — die tabel
       // is puur de kasstroom, saldo in een spaardoel is daar bewust los van.
-      if (S.familyId && fam.backendConfigured && g.id) push.updateGoal(g.id, { saved: newSaved });
+      if (S.familyId && fam.backendConfigured) {
+        if (g.id) push.updateGoal(g.id, { saved: newSaved });
+        push.updateChore(choreId, { allocated: true });
+      }
       if (newSaved >= g.target) {
         boom();
         addFeed({ who: kid, badge: `🎉 SPAARDOEL BEREIKT: ${g.name}!` });
         alertX("DOEL BEREIKT! 🎉", "Papa en mama: tijd om te kopen 🛒");
       }
     } else {
-      setS(s => ({ ...s, pendingAlloc: null, balances: { ...s.balances, [kid]: s.balances[kid] + cents } }));
+      setS(s => ({ ...s, balances: { ...s.balances, [kid]: s.balances[kid] + cents }, chores: s.chores.filter(x => x.id !== choreId) }));
       if (S.familyId && fam.backendConfigured) {
-        push.addLedgerEntry(S.familyId, { member_id: kid, cents, kind: "chore_reward", chore_id: choreId || null });
+        push.addLedgerEntry(S.familyId, { member_id: kid, cents, kind: "chore_reward", chore_id: choreId });
+        push.updateChore(choreId, { allocated: true });
       }
     }
   };
@@ -363,11 +379,18 @@ export default function App() {
     alertX("Uitbetalen", `${fmt(S.balances[kid])} aan ${S.members[kid].name} uitbetaald (buiten de app)?`, [
       { text: "Annuleren", style: "cancel" },
       { text: "Ja, registreer", onPress: () => {
-          const cents = S.balances[kid];
-          addFeed({ who: kid, badge: `💶 Zakgeld uitbetaald: ${fmt(cents)}` });
-          setS(s => ({ ...s, balances: { ...s.balances, [kid]: 0 } }));
-          if (S.familyId && fam.backendConfigured && cents) {
-            push.addLedgerEntry(S.familyId, { member_id: kid, cents: -cents, kind: "payout" });
+          // Bedrag pas ophalen op het moment van bevestigen (via de setS-updater, dus
+          // altijd de meest actuele stand) — niet het bedrag van toen de dialoog
+          // opende, dat kon intussen al achterhaald zijn door een klusje dat via een
+          // ander toestel is goedgekeurd terwijl deze dialoog nog open stond.
+          let paidCents = 0;
+          setS(s => {
+            paidCents = s.balances[kid] || 0;
+            return { ...s, balances: { ...s.balances, [kid]: 0 } };
+          });
+          addFeed({ who: kid, badge: `💶 Zakgeld uitbetaald: ${fmt(paidCents)}` });
+          if (S.familyId && fam.backendConfigured && paidCents) {
+            push.addLedgerEntry(S.familyId, { member_id: kid, cents: -paidCents, kind: "payout" });
           }
         } },
     ]);
@@ -413,7 +436,7 @@ export default function App() {
           // Een echte verse start: ook de demo-klusjes/spaardoelen/feed weg, niet
           // alleen de demo-namen — anders blijft "Vaatwasser uitruimen" van Emma/Daan
           // gewoon in de pool staan voor een gezin dat nog nooit klusjes had.
-          setS(s => ({ ...s, members, balances, chores: [], goals: {}, feed: [], pendingAlloc: null,
+          setS(s => ({ ...s, members, balances, chores: [], goals: {}, feed: [],
             setupDone: true, lastMe: null }));
           setMe(null);
         }} />
@@ -639,7 +662,10 @@ export default function App() {
     const kidBalances = Object.entries(S.balances).filter(([k]) => S.members[k]?.role === "kind");
     const topSaverKey = kidBalances.sort((a, b) => b[1] - a[1])[0]?.[0];
     const familyBalance = kidBalances.reduce((sum, [, v]) => sum + v, 0);
-    const activeChoreOf = (k) => S.chores.find(c => c.by === k && c.status !== "open");
+    // "approved" is geen weergavestatus (dat is de keuze-modal hierboven) — anders
+    // blijft een kaartje hier hangen zonder passende statustekst zolang het kind nog
+    // niet gekozen heeft waar het bedrag heen gaat.
+    const activeChoreOf = (k) => S.chores.find(c => c.by === k && c.status !== "open" && c.status !== "approved");
     const ordered = Object.entries(S.members).slice()
       .sort((a, b) => (a[0] === me ? -1 : b[0] === me ? 1 : 0) || (S.balances[b[0]] - S.balances[a[0]]));
 
@@ -777,10 +803,10 @@ export default function App() {
       <View style={{ height: 4 }} />
 
       {/* Mijn klusjes (kind) — direct af te ronden vanaf de home */}
-      {role === "kind" && S.chores.some(c => c.by === me && c.status !== "open") ? (
+      {role === "kind" && S.chores.some(c => c.by === me && c.status !== "open" && c.status !== "approved") ? (
         <>
           <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10, marginTop: 6 }}>MIJN KLUSJES</Text>
-          {S.chores.filter(c => c.by === me && c.status !== "open").map(c => <ChoreCard key={c.id} c={c} />)}
+          {S.chores.filter(c => c.by === me && c.status !== "open" && c.status !== "approved").map(c => <ChoreCard key={c.id} c={c} />)}
         </>
       ) : null}
 
@@ -872,7 +898,7 @@ export default function App() {
       <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginVertical: 10 }}>
         {role === "kind" ? (jr ? "KLUSJES — PAK ZE! 🙌" : "OPEN POOL — CLAIM ZE SNEL")
           : S.premiumUnlocked ? `IN DE POOL (${active.length}, onbeperkt ✨)` : `IN DE POOL (${active.length}/${FREE_CHORE_LIMIT} gratis)`}</Text>
-      {S.chores.filter(c => c.status !== "waiting" || role === "kind").map(c => <ChoreCard key={c.id} c={c} />)}
+      {S.chores.filter(c => (c.status !== "waiting" || role === "kind") && c.status !== "approved").map(c => <ChoreCard key={c.id} c={c} />)}
       {role === "ouder" ? (
         <Btn t={t} kind="ghost" onPress={() => {
           if (!S.premiumUnlocked && active.length >= FREE_CHORE_LIMIT) {
@@ -1236,20 +1262,22 @@ export default function App() {
         ))}
       </View>
 
-      {/* Allocation modal: shown to the kid whose chore was approved */}
-      <Modal visible={!!S.pendingAlloc && me === S.pendingAlloc?.kid} transparent animationType="slide">
+      {/* Allocation modal: shown to the kid whose chore was approved — werkt op elk
+          toestel waar dit kind inlogt, want awaitingAllocation komt uit S.chores (dat
+          al synct), niet meer uit een lokaal-only veld. */}
+      <Modal visible={!!awaitingAllocation} transparent animationType="slide">
         <View style={{ flex: 1, backgroundColor: "rgba(10,5,25,0.55)", justifyContent: "flex-end" }}>
           <View style={{ backgroundColor: t.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 }}>
             <Text style={{ textAlign: "center", fontWeight: "800", fontSize: jr ? 20 : 17, color: t.ink }}>
               {jr ? "Gelukt! 🎉🎉" : "Goedgekeurd! 🎉"}</Text>
             <Text style={{ textAlign: "center", fontWeight: "900", fontSize: jr ? 46 : 40, color: t.accent,
-              marginVertical: 6, letterSpacing: -1 }}>+{S.pendingAlloc ? fmt(S.pendingAlloc.cents) : ""}</Text>
+              marginVertical: 6, letterSpacing: -1 }}>+{awaitingAllocation ? fmt(awaitingAllocation.cents) : ""}</Text>
             <Text style={{ textAlign: "center", fontSize: jr ? 15 : 13, color: t.sub, marginBottom: 18 }}>
-              {jr ? "Waar gaat het heen? 🤔" : `${S.pendingAlloc?.title || ""} — waar gaat het heen?`}</Text>
+              {jr ? "Waar gaat het heen? 🤔" : `${awaitingAllocation?.title || ""} — waar gaat het heen?`}</Text>
             <View style={{ gap: 10 }}>
-              {S.goals[S.pendingAlloc?.kid] ? (
+              {S.goals[me] ? (
                 <Btn t={t} jr={jr} onPress={() => allocate(true)}>
-                  🐷 {jr ? "Sparen!" : `Naar mijn spaardoel (${S.goals[S.pendingAlloc?.kid]?.name})`}</Btn>
+                  🐷 {jr ? "Sparen!" : `Naar mijn spaardoel (${S.goals[me]?.name})`}</Btn>
               ) : null}
               <Btn t={t} jr={jr} kind="ghost" onPress={() => allocate(false)}>💸 {jr ? "Zelf houden!" : "Naar vrij saldo"}</Btn>
             </View>
