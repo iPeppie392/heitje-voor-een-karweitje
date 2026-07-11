@@ -21,6 +21,25 @@ import { registerForPushToken, sendPushNotification } from "./src/notifications"
 import FamilySetup from "./src/screens/FamilySetup";
 
 const FREE_CHORE_LIMIT = 5; // free tier: max active chores (premium: unlimited)
+
+// Kandidaat-snelkoppelingen per rol voor Home — icon/label hier op één plek, zodat het
+// aanpas-lijstje (Sheet) en de knoppen zelf (in Feed) nooit uit de pas kunnen lopen.
+const SHORTCUT_ITEMS = {
+  kind: [
+    { key: "klusjes", icon: "🧹", label: "Klusjes" },
+    { key: "sparen", icon: "🐷", label: "Sparen" },
+    { key: "gezin", icon: "👨‍👩‍👧", label: "Gezin" },
+    { key: "wissel", icon: "🔄", label: "Wissel" },
+  ],
+  ouder: [
+    { key: "nieuwklus", icon: "➕", label: "Nieuw klus" },
+    { key: "keuren", icon: "🧐", label: "Keuren" },
+    { key: "uitbetalen", icon: "💶", label: "Uitbetalen" },
+    { key: "sparen", icon: "🐷", label: "Sparen" },
+    { key: "gezin", icon: "👨‍👩‍👧", label: "Gezin" },
+    { key: "wissel", icon: "🔄", label: "Wissel" },
+  ],
+};
 const APP_VERSION = "0.2.0";
 const BG_LIGHT = require("./assets/bg-light.png");
 const BG_DARK = require("./assets/bg-dark.png");
@@ -68,6 +87,7 @@ export default function App() {
   const [tourStep, setTourStep] = useState(0);
   const [tourForced, setTourForced] = useState(false); // (i)-knop of "opnieuw bekijken" negeert tourSeen
   const [pricingForced, setPricingForced] = useState(false); // "Bekijk prijzen opnieuw" in Instellingen
+  const [shortcutsSheet, setShortcutsSheet] = useState(false); // ✏️-knop bij SNELKOPPELINGEN op Home
   const scrollY = useRef(new Animated.Value(0)).current; // achtergrond-parallax op het hoofdscherm
 
   // Een apart demo-linkje (?demo=1, alleen gebruikt door de marketingsite) begint altijd
@@ -967,21 +987,18 @@ export default function App() {
       </TouchableOpacity>
     );
 
-    const shortcuts = role === "kind"
-      ? [
-          { icon: "🧹", label: "Klusjes", on: () => setTab("klusjes") },
-          { icon: "🐷", label: "Sparen", on: () => setTab("sparen") },
-          { icon: "👨‍👩‍👧", label: "Gezin", on: () => setTab("gezin") },
-          { icon: "🔄", label: "Wissel", on: () => setMe(null) },
-        ]
-      : [
-          { icon: "➕", label: "Nieuw klus", on: () => { if (!S.premiumUnlocked && active.length >= FREE_CHORE_LIMIT) { alertX("Premium ✨", `Gratis: max ${FREE_CHORE_LIMIT} actieve klusjes.`); } else setChoreModal(true); } },
-          { icon: "🧐", label: "Keuren", on: () => setTab("klusjes") },
-          { icon: "💶", label: "Uitbetalen", on: () => setTab("gezin") },
-          { icon: "🐷", label: "Sparen", on: () => setTab("sparen") },
-          { icon: "👨‍👩‍👧", label: "Gezin", on: () => setTab("gezin") },
-          { icon: "🔄", label: "Wissel", on: () => setMe(null) },
-        ];
+    const SHORTCUT_ACTIONS = {
+      klusjes: () => setTab("klusjes"),
+      sparen: () => setTab("sparen"),
+      gezin: () => setTab("gezin"),
+      wissel: () => setMe(null),
+      nieuwklus: () => { if (!S.premiumUnlocked && active.length >= FREE_CHORE_LIMIT) { alertX("Premium ✨", `Gratis: max ${FREE_CHORE_LIMIT} actieve klusjes.`); } else setChoreModal(true); },
+      keuren: () => setTab("klusjes"),
+      uitbetalen: () => setTab("gezin"),
+    };
+    const shortcutsAll = SHORTCUT_ITEMS[role === "kind" ? "kind" : "ouder"]
+      .map(s => ({ ...s, on: SHORTCUT_ACTIONS[s.key] }));
+    const shortcuts = shortcutsAll.filter(s => !(S.hiddenShortcuts || []).includes(s.key));
 
     const MemberCard = ({ k, m }) => {
       const bal = S.balances[k];
@@ -1063,7 +1080,12 @@ export default function App() {
       </Card>
 
       {/* SNELKOPPELINGEN */}
-      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>SNELKOPPELINGEN</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1 }}>SNELKOPPELINGEN</Text>
+        <TouchableOpacity onPress={() => setShortcutsSheet(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Text style={{ fontSize: 13 }}>✏️</Text>
+        </TouchableOpacity>
+      </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingBottom: 4 }} style={{ marginBottom: 14 }}>
         {shortcuts.map((s, i) => <Shortcut key={i} icon={s.icon} label={s.label} onPress={s.on} />)}
       </ScrollView>
@@ -1863,6 +1885,28 @@ export default function App() {
             </View>
           </View>
         ) : null}
+      </Sheet>
+      <Sheet t={t} visible={shortcutsSheet} onClose={() => setShortcutsSheet(false)} title="✏️ Snelkoppelingen aanpassen">
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 14 }}>
+          Kies welke snelkoppelingen op Home staan. Zet iets uit dat je toch al onderin de tabbalk hebt.</Text>
+        {SHORTCUT_ITEMS[role === "kind" ? "kind" : "ouder"].map(s => {
+          const hidden = (S.hiddenShortcuts || []).includes(s.key);
+          return (
+            <View key={s.key} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+              paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: t.line }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Text style={{ fontSize: 18 }}>{s.icon}</Text>
+                <Text style={{ fontSize: 14, fontWeight: "700", color: t.ink }}>{s.label}</Text>
+              </View>
+              <Btn t={t} small kind={hidden ? "ghost" : "primary"} onPress={() => {
+                const next = hidden
+                  ? (S.hiddenShortcuts || []).filter(k => k !== s.key)
+                  : [...(S.hiddenShortcuts || []), s.key];
+                patch({ hiddenShortcuts: next });
+              }}>{hidden ? "Verborgen" : "Zichtbaar"}</Btn>
+            </View>
+          );
+        })}
       </Sheet>
       <GiftModal t={t} visible={giftModal} onClose={() => setGiftModal(false)} cur={S.cur}
         kids={Object.entries(S.members).filter(([, m]) => m.role === "kind")} onRegister={receiveGift} />
