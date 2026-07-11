@@ -1,16 +1,34 @@
 import React, { useEffect, useRef } from "react";
-import { View, Text, TouchableOpacity, Image, Animated, Dimensions } from "react-native";
+import { View, Text, TouchableOpacity, Pressable, Image, Animated, Dimensions } from "react-native";
 import Svg, { Circle } from "react-native-svg";
+import * as Haptics from "expo-haptics";
+import { createAudioPlayer } from "expo-audio";
 import { jrWord } from "./theme";
+
+// Eén gedeelde geluidsspeler voor alle knoppen in de app (niet per knop opnieuw aanmaken —
+// dat zou tientallen native speler-instanties tegelijk geven op een druk scherm).
+let tapPlayer = null;
+try { tapPlayer = createAudioPlayer(require("../assets/sounds/tap.wav")); } catch { tapPlayer = null; }
+
+// AdSlot zit in een eigen bestand met een .web.js-variant: Metro's webbundelaar kan
+// react-native-google-mobile-ads niet bundelen (gebruikt React Native-interne modules
+// die op web niet bestaan) — een losse module per platform lost dat op, een if-check
+// in dit bestand was niet genoeg (Metro bundelt alle require()'s statisch, ongeacht
+// runtime-conditie). Zie src/AdSlot.js / src/AdSlot.web.js.
+export { AdSlot } from "./AdSlot";
 
 export const Card = ({ t, children, style, onPress }) => {
   const inner = (
-    <View style={[{ backgroundColor: t.card, borderRadius: 20, padding: 16, borderWidth: 1,
+    <View style={[{ backgroundColor: t.card, borderRadius: t.radius ?? 20, padding: 16, borderWidth: 1,
       borderColor: t.line }, style]}>{children}</View>
   );
   return onPress ? <TouchableOpacity activeOpacity={0.85} onPress={onPress}>{inner}</TouchableOpacity> : inner;
 };
 
+// Klein, subtiel drukgevoel op elke knop in de app: iets kleiner worden bij aanraken
+// (net genoeg om "aanraakbaar" te voelen, niet overdreven), een zachte trilling en een
+// heel kort tikje geluid. Faalt altijd stil (try/catch) — een knop mag nooit crashen
+// omdat een geluid of trilling niet beschikbaar is (bijv. op web).
 export const Btn = ({ t, children, onPress, kind = "primary", small, jr }) => {
   const kinds = {
     primary: { backgroundColor: t.accent, color: "#fff" },
@@ -19,25 +37,42 @@ export const Btn = ({ t, children, onPress, kind = "primary", small, jr }) => {
     success: { backgroundColor: t.green, color: "#fff" },
   };
   const k = kinds[kind];
+  const ts = t.textScale || 1;
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const pressIn = () => {
+    Animated.spring(scale, { toValue: 0.96, useNativeDriver: true, speed: 40, bounciness: 0 }).start();
+  };
+  const pressOut = () => {
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 6 }).start();
+  };
+  const handlePress = () => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    try { tapPlayer?.seekTo?.(0); tapPlayer?.play?.(); } catch {}
+    onPress?.();
+  };
+
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.8} style={{
-      backgroundColor: k.backgroundColor, borderWidth: k.borderWidth || 0, borderColor: k.borderColor,
-      borderRadius: 999, paddingVertical: jr ? 14 : small ? 9 : 12, paddingHorizontal: jr ? 22 : small ? 14 : 18,
-      alignItems: "center" }}>
-      <Text style={{ color: k.color, fontWeight: "800", fontSize: jr ? 17 : small ? 13 : 15 }}>{children}</Text>
-    </TouchableOpacity>
+    <Pressable onPress={handlePress} onPressIn={pressIn} onPressOut={pressOut}>
+      <Animated.View style={{ transform: [{ scale }],
+        backgroundColor: k.backgroundColor, borderWidth: k.borderWidth || 0, borderColor: k.borderColor,
+        borderRadius: 999, paddingVertical: jr ? 14 : small ? 9 : 12, paddingHorizontal: jr ? 22 : small ? 14 : 18,
+        alignItems: "center" }}>
+        <Text style={{ color: k.color, fontWeight: "800", fontSize: Math.round((jr ? 17 : small ? 13 : 15) * ts) }}>{children}</Text>
+      </Animated.View>
+    </Pressable>
   );
 };
 
 export const Chip = ({ t, children, color, big }) => (
   <View style={{ backgroundColor: t.chip, borderRadius: 999, paddingVertical: big ? 6 : 4,
     paddingHorizontal: big ? 14 : 10 }}>
-    <Text style={{ color: color || t.accent, fontWeight: "800", fontSize: big ? 16 : 13 }}>{children}</Text>
+    <Text style={{ color: color || t.accent, fontWeight: "800", fontSize: Math.round((big ? 16 : 13) * (t.textScale || 1)) }}>{children}</Text>
   </View>
 );
 
 export const Amount = ({ t, children, size = 22 }) => (
-  <Text style={{ fontWeight: "900", fontSize: size, color: t.accent, letterSpacing: -0.5 }}>{children}</Text>
+  <Text style={{ fontWeight: "900", fontSize: Math.round(size * (t.textScale || 1)), color: t.accent, letterSpacing: -0.5 }}>{children}</Text>
 );
 
 // Photo/emoji tile used for chore proof and goal images

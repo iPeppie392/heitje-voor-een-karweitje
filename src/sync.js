@@ -1,0 +1,125 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { supabase } from "./supabase";
+
+const QUEUE_KEY = "heitje-pending-writes-v1";
+
+// ---- Vertaling: Supabase-rijen -> dezelfde vorm die App.js al gebruikt ----
+export function rowsToLocalShape({ members, chores, goals, feedPosts, balances, family }) {
+  const membersById = {};
+  for (const m of members) {
+    membersById[m.id] = {
+      name: m.name, avatar: m.avatar, age: m.age, role: m.role,
+      streak: m.streak, color: m.color,
+    };
+  }
+
+  const balancesById = {};
+  for (const m of members) balancesById[m.id] = 0;
+  for (const b of balances) balancesById[b.member_id] = b.balance_cents;
+
+  const choresOut = chores.map((c) => ({
+    id: c.id, title: c.title, room: c.room, emoji: c.emoji, cents: c.cents,
+    status: c.status, by: c.claimed_by, conditions: c.conditions,
+    checked: c.checked, beforeUri: c.before_uri, afterUri: c.after_uri,
+    rejectReason: c.reject_reason,
+  }));
+
+  const goalsById = {};
+  for (const g of goals) {
+    goalsById[g.kid_id] = {
+      id: g.id, name: g.name, emoji: g.emoji, imageUri: g.image_uri,
+      target: g.target, saved: g.saved, link: g.link, approved: g.approved,
+    };
+  }
+
+  const feedOut = feedPosts.map((f) => ({
+    id: f.id, who: f.who, title: f.title, cents: f.cents,
+    beforeUri: f.before_uri, afterUri: f.after_uri, badge: f.badge,
+    rx: f.rx, createdAt: f.created_at,
+  }));
+
+  return {
+    members: membersById, balances: balancesById, chores: choresOut, goals: goalsById, feed: feedOut,
+    cur: family?.currency, premiumUnlocked: !!family?.premium_unlocked,
+  };
+}
+
+export async function pullFamilyState(familyId) {
+  const [members, chores, goals, feedPosts, balances, family] = await Promise.all([
+    supabase.from("members").select("*").eq("family_id", familyId),
+    supabase.from("chores").select("*").eq("family_id", familyId),
+    supabase.from("goals").select("*").eq("family_id", familyId),
+    supabase.from("feed_posts").select("*").eq("family_id", familyId).order("created_at", { ascending: false }).limit(200),
+    supabase.from("member_balances").select("*").eq("family_id", familyId),
+    supabase.from("families").select("*").eq("id", familyId).single(),
+  ]);
+  for (const r of [members, chores, goals, feedPosts, balances, family]) if (r.error) throw r.error;
+  return rowsToLocalShape({
+    members: members.data, chores: chores.data, goals: goals.data,
+    feedPosts: feedPosts.data, balances: balances.data, family: family.data,
+  });
+}
+
+export function subscribeFamilyRealtime(familyId, onChange) {
+  const channel = supabase
+    .channel(`family:${familyId}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "chores", filter: `family_id=eq.${familyId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "goals", filter: `family_id=eq.${familyId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "members", filter: `family_id=eq.${familyId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "ledger_entries", filter: `family_id=eq.${familyId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "feed_posts", filter: `family_id=eq.${familyId}` }, onChange)
+    .subscribe();
+  return () => supabase.removeChannel(channel);
+}
+
+// ---- Schrijven: elke functie faalt stil naar de wachtrij, nooit blokkerend voor de UI ----
+async function enqueue(op) {
+  const raw = await AsyncStorage.getItem(QUEUE_KEY);
+  const queue = raw ? JSON.parse(raw) : [];
+  queue.push({ ...op, at: Date.now() });
+  await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+}
+
+async function run(table, action, payload) {
+  try {
+    let q = supabase.from(table);
+    if (action === "insert") q = q.insert(payload);
+    else if (action === "update") q = q.update(payload.values).match(payload.match);
+    else if (action === "delete") q = q.delete().match(payload.match);
+    const { error } = await q;
+    if (error) throw error;
+  } catch (e) {
+    await enqueue({ table, action, payload });
+  }
+}
+
+export const push = {
+  upsertChore: (familyId, chore) => run("chores", "insert", { family_id: familyId, ...chore }),
+  updateChore: (id, values) => run("chores", "update", { values, match: { id } }),
+  upsertGoal: (familyId, kidId, goal) => run("goals", "insert", { family_id: familyId, kid_id: kidId, ...goal }),
+  updateGoal: (id, values) => run("goals", "update", { values, match: { id } }),
+  addLedgerEntry: (familyId, entry) => run("ledger_entries", "insert", { family_id: familyId, ...entry }),
+  addFeedPost: (familyId, post) => run("feed_posts", "insert", { family_id: familyId, ...post }),
+  updateMember: (id, values) => run("members", "update", { values, match: { id } }),
+};
+
+export async function flushPendingWrites() {
+  const raw = await AsyncStorage.getItem(QUEUE_KEY);
+  if (!raw) return;
+  const queue = JSON.parse(raw);
+  if (!queue.length) return;
+  const remaining = [];
+  for (const op of queue) {
+    try {
+      let q = supabase.from(op.table);
+      if (op.action === "insert") q = q.insert(op.payload);
+      else if (op.action === "update") q = q.update(op.payload.values).match(op.payload.match);
+      else if (op.action === "delete") q = q.delete().match(op.payload.match);
+      const { error } = await q;
+      if (error) throw error;
+    } catch {
+      remaining.push(op);
+    }
+  }
+  await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
+}

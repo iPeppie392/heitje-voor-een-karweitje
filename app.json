@@ -2,7 +2,7 @@
   "expo": {
     "name": "Heitje voor een karweitje",
     "slug": "heitje-voor-een-karweitje",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -16,14 +16,18 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "nl.heitje.karweitje",
+      "buildNumber": "3",
       "infoPlist": {
-        "NSCameraUsageDescription": "Heitje uses the camera for before/after photos of chores.",
+        "NSCameraUsageDescription": "Heitje uses the camera for before/after photos of chores, or to scan a family invite code.",
         "NSPhotoLibraryUsageDescription": "Heitje uses your photo library for savings goal images."
       }
     },
     "android": {
       "package": "nl.heitje.karweitje",
-      "permissions": ["CAMERA"],
+      "versionCode": 3,
+      "permissions": [
+        "CAMERA"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#7C3AED"
@@ -38,6 +42,20 @@
         {
           "cameraPermission": "Heitje uses the camera for before/after photos of chores.",
           "photosPermission": "Heitje uses your photo library for savings goal images."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Heitje uses the camera to scan a family invite QR code."
+        }
+      ],
+      "expo-audio",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-3747360356393074~2683320880",
+          "iosAppId": "ca-app-pub-3747360356393074~2683320880"
         }
       ]
     ]

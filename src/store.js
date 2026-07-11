@@ -8,8 +8,8 @@ export const KEY = "heitje-state-v1";
 export const DEFAULT_MEMBERS = {
   emma:   { name: "Emma", avatar: "🦊", age: 10, role: "kind",  streak: 6,  color: "#7C3AED" },
   daan:   { name: "Daan", avatar: "🚀", age: 14, role: "kind",  streak: 3,  color: "#0EA5E9" },
-  wouter: { name: "Papa", avatar: "😎", age: 42, role: "ouder", streak: 12, color: "#16A34A" },
-  mama:   { name: "Mama", avatar: "🌷", age: 41, role: "ouder", streak: 9,  color: "#F59E0B" },
+  wouter: { name: "Vader", avatar: "😎", age: 42, role: "ouder", streak: 12, color: "#16A34A" },
+  mama:   { name: "Moeder", avatar: "🌷", age: 41, role: "ouder", streak: 9,  color: "#F59E0B" },
 };
 
 export const DEFAULT_STATE = {
@@ -29,6 +29,27 @@ export const DEFAULT_STATE = {
   feed: [],
   pendingAlloc: null, // { kid, cents, title }
   lastMe: null,       // laatst gekozen profiel op dit toestel → automatisch inloggen
+  setupDone: false,   // heeft dit toestel de welkom-wizard (echte namen invoeren) al doorlopen?
+
+  // Fase 1 — backend/gezin-koppeling. Blijven allemaal null/false zolang er geen
+  // gezin-account is aangemaakt: de app werkt dan gewoon zoals altijd, 100% lokaal.
+  familyId: null,        // Supabase family-id zodra dit toestel aan een gezin-account hangt
+  cloudMemberId: null,    // de member-rij van DIT ouder-profiel in dat gezin
+  migrated: false,        // is bestaande lokale data al een keer overgezet naar de cloud?
+  premiumUnlocked: false, // true na een geldige gratis premium-code (fase 6b) of later een echte aankoop
+
+  // Fase 7 — reclame (alleen ooit in ouder-weergaven, nooit bij kinderen).
+  adStyle: "bottom-block", // "bottom-block" | "startup-then-free" | "top-bottom-standard"
+
+  // Fase 4 — uiterlijk & gevoel. Per toestel ingesteld, geldt voor het hele gezin op dat toestel.
+  themeChoice: "paars",   // "paars" | "blauw" | "groen" | "amber" — zie src/theme.js THEMES
+  themeOverride: null,    // null = automatisch (systeeminstelling), of "light" | "dark"
+  radiusScale: 1,         // 0.7–1.3, instelbaar via slider ("afronding")
+  textScale: 1,           // 0.9–1.15, instelbaar via slider ("tekstgrootte")
+
+  // Fase 5 — onboarding & hulp.
+  tourEnabled: true,      // eerste-keer tour-guide + het (i)-knopje aan/uit
+  tourSeen: false,        // is de eerste-keer tour al een keer doorlopen op dit toestel?
 };
 
 export async function loadState() {

@@ -1,41 +1,98 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity, Modal, TextInput, Alert,
   SafeAreaView, useColorScheme, KeyboardAvoidingView, Platform, Linking,
+  Animated, Image, Dimensions, Share,
 } from "react-native";
 
 const LEGAL_BASE = "https://heitje-voor-een-karweitje-five.vercel.app";
 import { StatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
-import { light, dark, fmt as fmt0 } from "./src/theme";
-import { loadState, saveState, resetState, DEFAULT_STATE } from "./src/store";
-import { Card, Btn, Chip, Amount, PhotoBox, Ring, JuniorBar, Confetti } from "./src/components";
+import QRCode from "react-native-qrcode-svg";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { light, buildTheme, THEMES, THEME_CHOICES, fmt as fmt0 } from "./src/theme";
+import Slider from "@react-native-community/slider";
+import { loadState, saveState, resetState, DEFAULT_STATE, DEFAULT_MEMBERS } from "./src/store";
+import { Card, Btn, Chip, Amount, PhotoBox, Ring, JuniorBar, Confetti, AdSlot } from "./src/components";
+import { useFamily } from "./src/useFamily";
+import { supabase } from "./src/supabase";
+import FamilySetup from "./src/screens/FamilySetup";
 
 const FREE_CHORE_LIMIT = 5; // free tier: max active chores (premium: unlimited)
+const APP_VERSION = "0.2.0";
+const BG_LIGHT = require("./assets/bg-light.png");
+const BG_DARK = require("./assets/bg-dark.png");
+const WIN_H = Dimensions.get("window").height;
+
+// react-native-web's eigen Alert.alert() is een complete no-op (geen window.alert/confirm,
+// helemaal niets) — zonder dit zou elke melding en elke bevestiging-voor-verwijderen
+// stil niets doen op de website-versie van de app. Zelfde aanroep-vorm als Alert.alert,
+// dus overal drop-in vervangen. Op een telefoon (Expo Go/native) gebruikt dit gewoon
+// de echte, native Alert.alert.
+function alertX(title, message, buttons) {
+  if (Platform.OS !== "web") { Alert.alert(title, message, buttons); return; }
+  const text = message ? `${title}\n\n${message}` : title;
+  if (!buttons || buttons.length <= 1) { window.alert(text); buttons?.[0]?.onPress?.(); return; }
+  const proceed = window.confirm(text);
+  const btn = buttons.find(b => (proceed ? b.style !== "cancel" : b.style === "cancel"));
+  btn?.onPress?.();
+}
 
 export default function App() {
   const scheme = useColorScheme();
-  const t = scheme === "dark" ? dark : light;
-
   const [loaded, setLoaded] = useState(false);
   const [booted, setBooted] = useState(false);
   const [S, setS] = useState(DEFAULT_STATE);
+  const isDark = S.themeOverride ? S.themeOverride === "dark" : scheme === "dark";
+  const t = buildTheme({ themeChoice: S.themeChoice, dark: isDark, radiusScale: S.radiusScale, textScale: S.textScale });
   const [me, setMe] = useState(null); // active profile on this device
   const [tab, setTab] = useState("feed");
   const [confetti, setConfetti] = useState(false);
   const [choreModal, setChoreModal] = useState(false);
   const [goalModal, setGoalModal] = useState(false);
   const [rejectFor, setRejectFor] = useState(null); // chore id being rejected
+  const [familySetupOpen, setFamilySetupOpen] = useState(false);
+  const [inviteCode, setInviteCode] = useState(null);
+  const [kidModal, setKidModal] = useState(false);
+  const [qrKid, setQrKid] = useState(null); // key van kind waarvan de deel-QR getoond wordt
+  const [parentModal, setParentModal] = useState(false);
+  const [promoInput, setPromoInput] = useState("");
+  const [giftModal, setGiftModal] = useState(false);
+  const [startupAdDismissed, setStartupAdDismissed] = useState(false); // alleen voor deze sessie
+  const [tourStep, setTourStep] = useState(0);
+  const [tourForced, setTourForced] = useState(false); // (i)-knop of "opnieuw bekijken" negeert tourSeen
+  const scrollY = useRef(new Animated.Value(0)).current; // achtergrond-parallax op het hoofdscherm
 
   useEffect(() => { loadState().then(s => { setS(s); setLoaded(true); }); }, []);
   useEffect(() => { if (loaded) saveState(S); }, [S, loaded]);
-  // Automatisch inloggen: open meteen bij het laatst gekozen profiel op dit toestel
+
+  // Fase 1 — gezin-account (optioneel): zonder .env-config doet dit niets en blijft
+  // de app 100% lokaal, precies zoals nu. Zie src/supabase.js / src/useFamily.js.
+  const fam = useFamily({
+    familyId: S.familyId,
+    onCloudState: (cloud) => setS(s => ({ ...s, ...cloud })),
+  });
+  const onFamilySetupDone = ({ familyId, memberId, didMigrate }) => {
+    patch({ familyId, cloudMemberId: memberId, migrated: S.migrated || didMigrate });
+    setFamilySetupOpen(false);
+    setMe(memberId);
+  };
+  // Automatisch inloggen: open meteen bij het laatst gekozen profiel op dit toestel.
+  // Veiligheidscheck: een toestel dat al eerder eigen namen/klusjes had (van vóór de
+  // wizard bestond) mag de welkom-wizard NOOIT alsnog laten zien — dat zou hun data
+  // overschrijven. Alleen een echt kale, ongewijzigde demo-installatie krijgt de wizard.
   useEffect(() => {
     if (loaded && !booted) {
       setBooted(true);
       if (S.lastMe && S.members[S.lastMe]) setMe(S.lastMe);
     }
   }, [loaded, booted, S]);
+
+  // Vangnet: als het gekozen profiel niet meer bestaat (bijv. na demo-reset of
+  // een gezinswissel), terug naar het profielkeuzescherm in plaats van te crashen.
+  useEffect(() => {
+    if (me && !S.members[me]) setMe(null);
+  }, [me, S.members]);
 
   // Profiel kiezen op de inlogpagina — onthoudt de keuze voor de volgende keer
   const pick = (k) => { setMe(k); patch({ lastMe: k }); };
@@ -47,9 +104,140 @@ export default function App() {
   const boom = () => { setConfetti(false); setTimeout(() => setConfetti(true), 30); setTimeout(() => setConfetti(false), 2200); };
   const patch = (p) => setS(s => ({ ...s, ...p }));
 
+  // Rondleiding: standaard aan, eenmalig bij de eerste keer inloggen, en op elk moment
+  // terug te zien via het ⓘ-knopje of "Bekijk de rondleiding opnieuw" in Instellingen.
+  const TOUR_STEPS = useMemo(() => {
+    const steps = [
+      { icon: "🏠", title: "Welkom bij Heitje!", body: jr
+        ? "Heitje voor een karweitje is een app voor het hele gezin: jij doet klusjes in huis, maakt er een foto van, en verdient zakgeld zodra papa of mama het goedkeurt. Dit scherm is je Home — hier zie je je klusjes en hoeveel je al hebt verdiend!"
+        : role === "ouder"
+          ? "Heitje voor een karweitje helpt jullie gezin klusjes en zakgeld eerlijk te regelen: kinderen claimen klusjes uit een pool, maken een voor/na-foto, en jij keurt het resultaat goed voordat het zakgeld vrijkomt. Dit scherm is je Home — een overzicht van openstaande klusjes, wie er nog goedkeuring wacht, en het gezinssaldo."
+          : "Heitje voor een karweitje is een app voor het hele gezin: je pakt klusjes uit een pool, maakt er een foto van, en verdient zakgeld zodra het is goedgekeurd. Dit scherm is je Home — een overzicht van je klusjes en saldo." },
+      { icon: "✅", title: "Klusjes", body: jr
+        ? "Hier pak je klusjes. Doe de klus, maak een foto, en vraag het aan papa of mama!"
+        : "Hier staan alle klusjes: open, in uitvoering, en klaar om goed te keuren." },
+      { icon: "🐷", title: "Sparen", body: "Hier zie je spaardoelen en hoe dichtbij je al bent." },
+      { icon: "👨‍👩‍👧‍👦", title: "Gezin", body: role === "ouder"
+        ? "Hier zie je het saldo per kind, betaal je uit, en voeg je een nieuw kind toe."
+        : "Hier zie je hoeveel iedereen in het gezin heeft gespaard." },
+    ];
+    if (role === "ouder") steps.push({ icon: "⚙️", title: "Instellingen", body:
+      "Hier kies je een kleurthema, licht of donker, en pas je tekstgrootte en afronding aan." });
+    return steps;
+  }, [role, jr]);
+  const showTour = !!me && S.tourEnabled && (tourForced || !S.tourSeen);
+  const showAds = role === "ouder" && !S.premiumUnlocked; // nooit bij kinderen (harde regel)
+
+  // Uitgebreide, doorzoekbare uitleg — het ⓘ-knopje opent dit (los van de korte rondleiding).
+  const HELP_TOPICS = useMemo(() => {
+    const topics = [
+      { icon: "🏠", title: "Home", body: "Je startscherm: een overzicht van openstaande klusjes, je saldo (bij ouders: het gezinssaldo dat nog uitbetaald moet worden), en de gezinsactiviteit onderaan." },
+      { icon: "✅", title: "Klusjes claimen", body: "Kinderen tikken op 'Claimen' bij een openstaand klusje in de pool. Daarna is het klusje van jou totdat je het afrondt of het wordt afgekeurd." },
+      { icon: "📸", title: "Foto's bij een klusje", body: "Sommige klusjes vragen een voor- en na-foto als bewijs. Dat zie je aan het camera-icoontje bij het klusje. Foto's worden nooit gedeeld buiten je gezin." },
+      { icon: "📝", title: "Voorwaarden & checklist", body: "Een ouder kan bij het aanmaken van een klusje een checklist, een deadline en een notitie toevoegen. Het kind moet alle punten afvinken voordat het klusje afgerond kan worden." },
+      { icon: "🧐", title: "Goedkeuren & afkeuren", body: "Alleen ouders keuren klusjes goed of af. Bij afkeuren moet je altijd een reden opgeven, zodat het kind weet wat er nog moet gebeuren." },
+      { icon: "🐷", title: "Sparen", body: "Elk kind kan één spaardoel instellen met een naam, bedrag en optioneel een foto. Een ouder moet het doel eerst goedkeuren voordat de winkellink aanklikbaar wordt (ouderlijke poort)." },
+      { icon: "💰", title: "Zakgeld & uitbetalen", body: "De app rekent alleen in cijfers — er gaat nooit echt geld door de app. Zodra je je kind fysiek hebt uitbetaald (contant, tikkie, etc.), registreer je dat bij Gezin → 'Uitbetaald — registreer'." },
+      { icon: "👨‍👩‍👧‍👦", title: "Ouders verdienen geen zakgeld", body: "Ouders maken en beheren klusjes, maar kunnen ze niet zelf claimen of uitvoeren — alleen kinderen verdienen zakgeld." },
+      { icon: "👶", title: "Nieuw kind toevoegen", body: "Bij Gezin → '👶 Nieuw kind' vul je een naam, avatar en geboortedatum in (dag, maand, jaar). De geboortedatum wordt alleen gebruikt om de leeftijd te berekenen en daarna nergens opgeslagen." },
+      { icon: "🧑‍🤝‍🧑", title: "Nieuwe ouder toevoegen", body: "Bij Gezin → '🧑‍🤝‍🧑 Nieuwe ouder' voeg je een tweede ouder toe op dit toestel (naam, avatar, geboortedatum optioneel). Wil die ouder ook op een eigen toestel inloggen? Gebruik dan 'Gezin delen' met een code/QR." },
+      { icon: "✕", title: "Gezinslid verwijderen", body: "Bij Gezin staat een ✕ naast elk kind en elke ouder. Zo kan je de demo-namen (Emma, Daan, Vader, Moeder) verwijderen zodra je zelf echte gezinsleden hebt toegevoegd. Er moet altijd minstens één ouder overblijven." },
+      { icon: "🔗", title: "Kind delen via QR", body: "Bij Gezin staat onder elk kind '🔗 Delen als QR' — laat de andere ouder dit scannen bij '👶 Nieuw kind → 📷 Scan QR' om dat kind in één keer op hun toestel te zetten, zonder alles opnieuw in te typen." },
+      { icon: "🎁", title: "Bijdrage van familie", body: "Bij Gezin → '🎁 Bijdrage familie' maak je een deelbaar verzoekje voor opa, oma of een tante, dat je zelf verstuurt via WhatsApp/sms/mail. Zodra het bedrag er echt is, registreer je het met één tik." },
+      { icon: "🔗", title: "Gezin delen (QR/code)", body: "Een ouder kan bij Gezin een uitnodigingscode of QR-code maken zodat een tweede ouder zich bij hetzelfde gezin-account kan aansluiten. Vereist een gezin-account (zie 'Gezin-account')." },
+      { icon: "☁️", title: "Gezin-account", body: "Standaard werkt de app volledig lokaal op één toestel. Wil je met meerdere ouders/toestellen synchroniseren? Maak dan een gezin-account aan via het inlogscherm of de Gezin-tab." },
+      { icon: "🎨", title: "Thema", body: "Bij Instellingen kies je uit een paar doordachte kleurthema's (paars, blauw, groen, amber) — geen losse kleuren, om het premium-gevoel te bewaren." },
+      { icon: "🌗", title: "Licht of donker", body: "Bij Instellingen kies je Automatisch (volgt je toestel), Licht, of Donker." },
+      { icon: "🔠", title: "Tekstgrootte & afronding", body: "Twee sliders bij Instellingen waarmee je de tekst iets groter/kleiner en de hoeken iets ronder/hoekiger kan maken." },
+      { icon: "🧭", title: "Rondleiding", body: "Een korte uitleg die de eerste keer automatisch verschijnt. Zet 'm uit bij Instellingen, of bekijk 'm opnieuw via het ⓘ-knopje of de knop in Instellingen." },
+      { icon: "✨", title: "Premium & gratis codes", body: "Gratis: max 5 actieve klusjes per keer. Heb je een gratis code gekregen? Vul die in bij Instellingen → Premium om die limiet op te heffen." },
+      { icon: "📢", title: "Reclame", body: "Reclame komt nooit in beeld bij kinderen. Bij Instellingen kies je hoe je 'm als ouder wilt zien — nog niet actief, want dat vereist eerst een AdMob-account." },
+      { icon: "📮", title: "Feedback geven", body: "Bij Instellingen → 'Stuur feedback' open je je mail-app, voorgeadresseerd aan het Heitje-team." },
+      { icon: "🔄", title: "Van profiel wisselen", body: "Tik op je naam rechtsboven om terug te gaan naar het profielkeuzescherm." },
+      { icon: "💱", title: "Gezinsvaluta", body: "Bij Gezin kies je €, £ of $ — geldt voor het hele gezin." },
+    ];
+    return topics;
+  }, []);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpQuery, setHelpQuery] = useState("");
+  const filteredHelp = HELP_TOPICS.filter(h =>
+    !helpQuery.trim() || (h.title + " " + h.body).toLowerCase().includes(helpQuery.trim().toLowerCase()));
+  const closeTour = () => { patch({ tourSeen: true }); setTourForced(false); setTourStep(0); };
+
+  // Nieuw kind lokaal toevoegen (en meesynchroniseren als er al een gezin-account is).
+  const addKid = async (kid) => {
+    const key = `${kid.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}`;
+    setS(s => ({ ...s, members: { ...s.members, [key]: kid }, balances: { ...s.balances, [key]: 0 } }));
+    setKidModal(false);
+    if (S.familyId && fam.backendConfigured) {
+      try {
+        await supabase.from("members").insert({
+          family_id: S.familyId, name: kid.name, avatar: kid.avatar, age: kid.age, role: "kind", color: kid.color,
+        });
+      } catch { /* lokaal staat het goed, cloud-sync haalt dit later alsnog op */ }
+    }
+  };
+
+  // Extra ouder lokaal toevoegen (geen eigen inlog-account — dat is alleen nodig als
+  // deze ouder ook op een ánder toestel wil inloggen, via Gezin delen/QR).
+  const addParent = (parent) => {
+    const key = `${parent.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}`;
+    setS(s => ({ ...s, members: { ...s.members, [key]: parent }, balances: { ...s.balances, [key]: 0 } }));
+    setParentModal(false);
+  };
+
+  // Gezinslid verwijderen — met bevestiging, en een vangnet zodat er altijd
+  // minstens één ouder overblijft. Klusjes die dit lid geclaimd had gaan terug open.
+  const removeMember = (key) => {
+    const m = S.members[key];
+    if (!m) return;
+    if (m.role === "ouder" && Object.values(S.members).filter(x => x.role === "ouder").length <= 1) {
+      alertX("Kan niet verwijderen", "Er moet minstens één ouder in het gezin blijven.");
+      return;
+    }
+    alertX(`${m.name} verwijderen?`, "Dit kan niet ongedaan gemaakt worden.", [
+      { text: "Annuleren", style: "cancel" },
+      { text: "Verwijderen", style: "destructive", onPress: () => {
+        setS(s => {
+          const members = { ...s.members }; delete members[key];
+          const balances = { ...s.balances }; delete balances[key];
+          const goals = { ...s.goals }; delete goals[key];
+          const chores = s.chores.map(c => c.by === key ? { ...c, status: "open", by: null } : c);
+          return { ...s, members, balances, goals, chores };
+        });
+      } },
+    ]);
+  };
+
+  // Gratis premium-code inwisselen (fase 6b) — vereist een gezin-account, want de code
+  // wordt server-side bijgehouden zodat 'ie niet oneindig herbruikt kan worden.
+  const redeemPromo = async () => {
+    if (!S.familyId) { alertX("Eerst een gezin-account", "Maak eerst een gezin-account aan (Gezin-tab) om een code in te wisselen."); return; }
+    if (!promoInput.trim()) return;
+    try {
+      const ok = await fam.redeemPromoCode(promoInput.trim());
+      if (ok) { patch({ premiumUnlocked: true }); setPromoInput(""); alertX("Gelukt! ✨", "Premium is ontgrendeld voor jullie gezin."); }
+      else alertX("Code werkt niet", "Onbekend, verlopen, of al gebruikt.");
+    } catch { alertX("Dat ging niet goed", "Probeer het nog eens."); }
+  };
+
+  // Externe bijdrage handmatig registreren nadat een ouder 'm echt heeft ontvangen.
+  const receiveGift = async (kidKey, cents, giver) => {
+    setS(s => ({ ...s, balances: { ...s.balances, [kidKey]: (s.balances[kidKey] || 0) + cents } }));
+    addFeed({ who: kidKey, badge: `🎁 Bijdrage van ${giver}: ${fmt(cents)}` });
+    setGiftModal(false);
+    if (S.familyId && fam.backendConfigured) {
+      try {
+        await supabase.from("ledger_entries").insert({
+          family_id: S.familyId, member_id: kidKey, cents, kind: "manual_adjustment", note: `Bijdrage van ${giver}`,
+        });
+      } catch {}
+    }
+  };
+
   const takePhoto = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) { Alert.alert("Camera", "Geef cameratoegang om bewijsfoto's te maken."); return null; }
+    if (!perm.granted) { alertX("Camera", "Geef cameratoegang om bewijsfoto's te maken."); return null; }
     const res = await ImagePicker.launchCameraAsync({ quality: 0.4, allowsEditing: false });
     return res.canceled ? null : res.assets[0].uri;
   };
@@ -75,7 +263,9 @@ export default function App() {
   const allChecked = (c) => condChecklist(c).every((_, i) => !!c.checked?.[i]);
   const toggleCheck = (c, i) => setChore(c.id, { checked: condChecklist(c).map((_, j) => j === i ? !(c.checked?.[i]) : !!c.checked?.[j]) });
 
-  const claim = (c) => setChore(c.id, { status: "claimed", by: me, checked: condChecklist(c).map(() => false) });
+  // Ouders verdienen geen zakgeld — de UI toont de claim-knop al alleen aan kinderen,
+  // dit is de extra ondergrens zodat het ook via een andere weg nooit kan.
+  const claim = (c) => { if (role !== "kind") return; setChore(c.id, { status: "claimed", by: me, checked: condChecklist(c).map(() => false) }); };
 
   const photoBefore = async (c) => {
     const uri = await takePhoto();
@@ -112,7 +302,7 @@ export default function App() {
       if (newSaved >= g.target) {
         boom();
         addFeed({ who: kid, badge: `🎉 SPAARDOEL BEREIKT: ${g.name}!` });
-        Alert.alert("DOEL BEREIKT! 🎉", "Papa en mama: tijd om te kopen 🛒");
+        alertX("DOEL BEREIKT! 🎉", "Papa en mama: tijd om te kopen 🛒");
       }
     } else {
       setS(s => ({ ...s, pendingAlloc: null, balances: { ...s.balances, [kid]: s.balances[kid] + cents } }));
@@ -120,7 +310,7 @@ export default function App() {
   };
 
   const payout = (kid) => {
-    Alert.alert("Uitbetalen", `${fmt(S.balances[kid])} aan ${S.members[kid].name} uitbetaald (buiten de app)?`, [
+    alertX("Uitbetalen", `${fmt(S.balances[kid])} aan ${S.members[kid].name} uitbetaald (buiten de app)?`, [
       { text: "Annuleren", style: "cancel" },
       { text: "Ja, registreer", onPress: () => {
           addFeed({ who: kid, badge: `💶 Zakgeld uitbetaald: ${fmt(S.balances[kid])}` });
@@ -152,10 +342,40 @@ export default function App() {
   // ----- Profile picker (first launch / switch) -----
   if (!loaded) return <View style={{ flex: 1, backgroundColor: light.bg }} />;
 
-  if (!me) {
+  // Zolang de gezinsleden nog exact de ongewijzigde demo-set zijn (Emma/Daan/Vader/Moeder),
+  // is er verplicht eerst een echte ouder aan te maken — ongeacht lastMe/setupDone, want
+  // anders blijven mensen voor altijd met demo-namen zitten. De wizard vervangt de demo-set
+  // volledig; `onComplete` reset ook `me`/`lastMe` zodat er nooit naar een verdwenen profiel
+  // verwezen wordt (dat gaf ooit de witte-scherm-crash).
+  const stillDemoData = JSON.stringify(S.members) === JSON.stringify(DEFAULT_MEMBERS);
+  if (stillDemoData) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
-        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+        <StatusBar style={isDark ? "light" : "dark"} />
+        <WelcomeWizard t={t} onComplete={(members, balances) => {
+          // Een echte verse start: ook de demo-klusjes/spaardoelen/feed weg, niet
+          // alleen de demo-namen — anders blijft "Vaatwasser uitruimen" van Emma/Daan
+          // gewoon in de pool staan voor een gezin dat nog nooit klusjes had.
+          setS(s => ({ ...s, members, balances, chores: [], goals: {}, feed: [], pendingAlloc: null,
+            setupDone: true, lastMe: null }));
+          setMe(null);
+        }} />
+      </SafeAreaView>
+    );
+  }
+
+  if (!me) {
+    if (familySetupOpen) {
+      return (
+        <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+          <StatusBar style={isDark ? "light" : "dark"} />
+          <FamilySetup t={t} jr={false} fam={fam} localState={S} onDone={onFamilySetupDone} onCancel={() => setFamilySetupOpen(false)} />
+        </SafeAreaView>
+      );
+    }
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+        <StatusBar style={isDark ? "light" : "dark"} />
         <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24 }}>
           <Text style={{ fontSize: 52, fontWeight: "900", color: t.ink, letterSpacing: -2 }}>
             Heit<Text style={{ color: t.accent }}>je</Text></Text>
@@ -176,6 +396,12 @@ export default function App() {
               <Text style={{ fontSize: 20, color: t.sub }}>›</Text>
             </TouchableOpacity>
           ))}
+          {fam.backendConfigured && !S.familyId ? (
+            <TouchableOpacity onPress={() => setFamilySetupOpen(true)} style={{ marginTop: 8, alignItems: "center" }}>
+              <Text style={{ color: t.accent, fontWeight: "800", fontSize: 13.5 }}>
+                👨‍👩‍👧‍👦 Gezin aanmaken of koppelen met een code</Text>
+            </TouchableOpacity>
+          ) : null}
           <View style={{ flexDirection: "row", justifyContent: "center", gap: 16, marginTop: 20 }}>
             <TouchableOpacity onPress={() => Linking.openURL(`${LEGAL_BASE}/privacy.html`)}>
               <Text style={{ color: t.sub, fontSize: 12, textDecorationLine: "underline" }}>Privacybeleid</Text>
@@ -353,7 +579,9 @@ export default function App() {
     const openCount = S.chores.filter(c => c.status === "open").length;
     const totalSaved = Object.values(S.goals).reduce((a, g) => a + (g?.saved || 0), 0);
     const doneCount = S.feed.filter(p => !p.badge).length;
-    const topSaverKey = Object.entries(S.balances).sort((a, b) => b[1] - a[1])[0]?.[0];
+    const kidBalances = Object.entries(S.balances).filter(([k]) => S.members[k]?.role === "kind");
+    const topSaverKey = kidBalances.sort((a, b) => b[1] - a[1])[0]?.[0];
+    const familyBalance = kidBalances.reduce((sum, [, v]) => sum + v, 0);
     const activeChoreOf = (k) => S.chores.find(c => c.by === k && c.status !== "open");
     const ordered = Object.entries(S.members).slice()
       .sort((a, b) => (a[0] === me ? -1 : b[0] === me ? 1 : 0) || (S.balances[b[0]] - S.balances[a[0]]));
@@ -384,8 +612,8 @@ export default function App() {
           { icon: "🔄", label: "Wissel", on: () => setMe(null) },
         ]
       : [
-          { icon: "➕", label: "Nieuw klus", on: () => { if (active.length >= FREE_CHORE_LIMIT) { Alert.alert("Premium ✨", `Gratis: max ${FREE_CHORE_LIMIT} actieve klusjes.`); } else setChoreModal(true); } },
-          { icon: "✅", label: "Keuren", on: () => setTab("klusjes") },
+          { icon: "➕", label: "Nieuw klus", on: () => { if (!S.premiumUnlocked && active.length >= FREE_CHORE_LIMIT) { alertX("Premium ✨", `Gratis: max ${FREE_CHORE_LIMIT} actieve klusjes.`); } else setChoreModal(true); } },
+          { icon: "🧐", label: "Keuren", on: () => setTab("klusjes") },
           { icon: "💶", label: "Uitbetalen", on: () => setTab("gezin") },
           { icon: "🐷", label: "Sparen", on: () => setTab("sparen") },
           { icon: "👨‍👩‍👧", label: "Gezin", on: () => setTab("gezin") },
@@ -411,7 +639,7 @@ export default function App() {
               <Text style={{ fontSize: 12, color: t.sub }}>
                 {m.role === "kind" ? `Kind · ${m.age} jr` : "Ouder"} · 🔥 {m.streak}</Text>
             </View>
-            <Amount t={t} size={20}>{fmt(bal)}</Amount>
+            {m.role === "kind" ? <Amount t={t} size={20}>{fmt(bal)}</Amount> : null}
           </View>
           {g ? (
             <View style={{ marginTop: 10 }}>
@@ -451,8 +679,10 @@ export default function App() {
         </View>
         <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: 16 }}>
           <View>
-            <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: "800", letterSpacing: 0.5 }}>MIJN SALDO</Text>
-            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 40, letterSpacing: -1.5, marginTop: 2 }}>{fmt(S.balances[me])}</Text>
+            <Text style={{ color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: "800", letterSpacing: 0.5 }}>
+              {role === "kind" ? "MIJN SALDO" : "GEZINSSALDO (nog uit te betalen)"}</Text>
+            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 40, letterSpacing: -1.5, marginTop: 2 }}>
+              {fmt(role === "kind" ? S.balances[me] : familyBalance)}</Text>
           </View>
           {role === "kind" && myGoal ? (
             <View style={{ alignItems: "flex-end" }}>
@@ -583,12 +813,13 @@ export default function App() {
         </>
       ) : null}
       <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginVertical: 10 }}>
-        {role === "kind" ? (jr ? "KLUSJES — PAK ZE! 🙌" : "OPEN POOL — CLAIM ZE SNEL") : `IN DE POOL (${active.length}/${FREE_CHORE_LIMIT} gratis)`}</Text>
+        {role === "kind" ? (jr ? "KLUSJES — PAK ZE! 🙌" : "OPEN POOL — CLAIM ZE SNEL")
+          : S.premiumUnlocked ? `IN DE POOL (${active.length}, onbeperkt ✨)` : `IN DE POOL (${active.length}/${FREE_CHORE_LIMIT} gratis)`}</Text>
       {S.chores.filter(c => c.status !== "waiting" || role === "kind").map(c => <ChoreCard key={c.id} c={c} />)}
       {role === "ouder" ? (
         <Btn t={t} kind="ghost" onPress={() => {
-          if (active.length >= FREE_CHORE_LIMIT) {
-            Alert.alert("Premium ✨", `Gratis: max ${FREE_CHORE_LIMIT} actieve klusjes. Onbeperkt + wekelijks herhalen = Premium (€ 0,99/mnd).`);
+          if (!S.premiumUnlocked && active.length >= FREE_CHORE_LIMIT) {
+            alertX("Premium ✨", `Gratis: max ${FREE_CHORE_LIMIT} actieve klusjes. Onbeperkt + wekelijks herhalen = Premium (€ 0,99/mnd).`);
           } else setChoreModal(true);
         }}>＋ Nieuw klusje in de pool</Btn>
       ) : null}
@@ -602,7 +833,7 @@ export default function App() {
           <GoalCard kid={me} own />
           {S.goals[me] ? (
             <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
-              onPress={() => Alert.alert("Premium ✨", "Tweede spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
+              onPress={() => alertX("Premium ✨", "Tweede spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
               <Text style={{ fontSize: 24 }}>🔒</Text>
               <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Tweede spaardoel</Text>
               <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: 1 doel · meer met Premium</Text>
@@ -624,8 +855,37 @@ export default function App() {
 
   const Gezin = () => (
     <>
-      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>SALDO PER GEZINSLID</Text>
-      {Object.entries(S.balances).sort((a, b) => b[1] - a[1]).map(([k, v], i) => {
+      {role === "ouder" ? (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+          <View style={{ flex: 1, minWidth: 130 }}><Btn t={t} small kind="ghost" onPress={() => setKidModal(true)}>👶 Nieuw kind</Btn></View>
+          <View style={{ flex: 1, minWidth: 130 }}><Btn t={t} small kind="ghost" onPress={() => setParentModal(true)}>🧑‍🤝‍🧑 Nieuwe ouder</Btn></View>
+          <View style={{ flex: 1, minWidth: 130 }}><Btn t={t} small kind="ghost" onPress={() => setGiftModal(true)}>🎁 Bijdrage familie</Btn></View>
+        </View>
+      ) : null}
+
+      {role === "ouder" ? (
+        <>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>OUDERS</Text>
+          {Object.entries(S.members).filter(([, m]) => m.role === "ouder").map(([k, m]) => (
+            <Card t={t} key={k} style={{ marginBottom: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <View style={{ width: 44, height: 44, borderRadius: 999, backgroundColor: t.soft,
+                  alignItems: "center", justifyContent: "center" }}><Text style={{ fontSize: 22 }}>{m.avatar}</Text></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{m.name}{k === me ? " · jij" : ""}</Text>
+                  <Text style={{ fontSize: 12, color: t.sub }}>Ouder</Text>
+                </View>
+                <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}>
+                  <Text style={{ color: t.danger, fontWeight: "800", fontSize: 13 }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            </Card>
+          ))}
+        </>
+      ) : null}
+
+      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>SALDO PER KIND</Text>
+      {Object.entries(S.balances).filter(([k]) => S.members[k]?.role === "kind").sort((a, b) => b[1] - a[1]).map(([k, v], i) => {
         const m = S.members[k];
         return (
           <Card t={t} key={k} style={{ marginBottom: 10 }}>
@@ -639,22 +899,59 @@ export default function App() {
                   {m.role === "kind" ? ` · ${m.age < 12 ? "Junior" : "Tiener"}` : ""}</Text>
               </View>
               <Amount t={t} size={24}>{fmt(v)}</Amount>
+              {role === "ouder" ? (
+                <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}>
+                  <Text style={{ color: t.danger, fontWeight: "800", fontSize: 13 }}>✕</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
             {role === "ouder" && m.role === "kind" && v > 0 ? (
               <View style={{ marginTop: 10 }}>
                 <Btn t={t} small kind="ghost" onPress={() => payout(k)}>💶 Uitbetaald — registreer</Btn>
               </View>
             ) : null}
+            {role === "ouder" && m.role === "kind" ? (
+              <View style={{ marginTop: 10 }}>
+                <Btn t={t} small kind="ghost" onPress={() => setQrKid(k)}>🔗 Delen als QR (naar ander toestel)</Btn>
+              </View>
+            ) : null}
           </Card>
         );
       })}
+
+      {role === "ouder" && fam.backendConfigured ? (
+        <Card t={t} style={{ marginBottom: 12 }}>
+          <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 10 }}>👨‍👩‍👧‍👦 Gezin delen</Text>
+          {!S.familyId ? (
+            <>
+              <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+                Koppel dit toestel aan een gezin-account om samen met een andere ouder te synchroniseren.</Text>
+              <Btn t={t} small onPress={() => setFamilySetupOpen(true)}>Gezin aanmaken of koppelen</Btn>
+            </>
+          ) : inviteCode ? (
+            <View style={{ alignItems: "center" }}>
+              <View style={{ backgroundColor: "#fff", padding: 12, borderRadius: 12, marginBottom: 10 }}>
+                <QRCode value={`${LEGAL_BASE}/join/${inviteCode}`} size={140} />
+              </View>
+              <Text style={{ fontWeight: "900", fontSize: 22, letterSpacing: 3, color: t.ink, marginBottom: 6 }}>{inviteCode}</Text>
+              <Text style={{ fontSize: 12, color: t.sub, textAlign: "center" }}>
+                Geldig 24 uur. Laat de andere ouder scannen of de code intypen bij "Ik heb een code".</Text>
+            </View>
+          ) : (
+            <Btn t={t} small onPress={async () => {
+              try { setInviteCode(await fam.createInvite(S.familyId)); }
+              catch { alertX("Dat ging niet goed", "Probeer het nog eens."); }
+            }}>Uitnodiging maken voor een 2e ouder</Btn>
+          )}
+        </Card>
+      ) : null}
 
       {role === "ouder" ? (
         <Card t={t} style={{ marginBottom: 12 }}>
           <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 10 }}>💱 Gezinsvaluta</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             {["€", "£", "$"].map(c => (
-              <TouchableOpacity key={c} onPress={() => patch({ cur: c })} style={{ flex: 1, borderRadius: 12,
+              <TouchableOpacity key={c} onPress={() => { patch({ cur: c }); if (S.familyId) supabase.from("families").update({ currency: c }).eq("id", S.familyId).then(() => {}); }} style={{ flex: 1, borderRadius: 12,
                 paddingVertical: 12, alignItems: "center", backgroundColor: S.cur === c ? t.accent : t.soft }}>
                 <Text style={{ fontSize: 18, fontWeight: "800", color: S.cur === c ? "#fff" : t.ink }}>{c}</Text>
               </TouchableOpacity>
@@ -674,7 +971,7 @@ export default function App() {
           ⚠️ Disclaimer: testversie, "as-is", zonder garanties. Bedragen zijn geen echt geld — de app verwerkt geen
           betalingen. Uitbetalen en aankopen doet de ouder zelf. Gebruik op eigen risico. Zie de voorwaarden.</Text>
         <Btn t={t} small kind="danger" onPress={() =>
-          Alert.alert("Demo resetten", "Alle lokale data wissen?", [
+          alertX("Demo resetten", "Alle lokale data wissen?", [
             { text: "Annuleren", style: "cancel" },
             { text: "Wissen", style: "destructive", onPress: async () => { await resetState(); setS(DEFAULT_STATE); setMe(null); } },
           ])}>Demo-data resetten</Btn>
@@ -690,28 +987,150 @@ export default function App() {
     </>
   );
 
+  // ----- Instellingen (alleen ouders) -----
+  const Instellingen = () => (
+    <>
+      <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 10 }}>🎨 Thema</Text>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          {THEME_CHOICES.map(key => (
+            <TouchableOpacity key={key} onPress={() => patch({ themeChoice: key })}
+              style={{ alignItems: "center", gap: 6 }}>
+              <View style={{ width: 44, height: 44, borderRadius: 999, backgroundColor: THEMES[key].swatch,
+                borderWidth: S.themeChoice === key ? 3 : 0, borderColor: t.ink }} />
+              <Text style={{ fontSize: 11.5, fontWeight: "700", color: t.sub }}>{THEMES[key].label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </Card>
+
+      <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 10 }}>🌗 Licht of donker</Text>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          {[{ v: null, l: "Automatisch" }, { v: "light", l: "Licht" }, { v: "dark", l: "Donker" }].map(o => (
+            <TouchableOpacity key={o.l} onPress={() => patch({ themeOverride: o.v })} style={{ flex: 1, borderRadius: 12,
+              paddingVertical: 12, alignItems: "center", backgroundColor: S.themeOverride === o.v ? t.accent : t.soft }}>
+              <Text style={{ fontSize: 12.5, fontWeight: "800", color: S.themeOverride === o.v ? "#fff" : t.ink }}>{o.l}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </Card>
+
+      <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>🔠 Tekstgrootte</Text>
+        <Slider minimumValue={0.9} maximumValue={1.15} value={S.textScale} onSlidingComplete={v => patch({ textScale: v })}
+          minimumTrackTintColor={t.accent} maximumTrackTintColor={t.line} thumbTintColor={t.accent} />
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginTop: 14, marginBottom: 4 }}>⬜ Afronding van hoeken</Text>
+        <Slider minimumValue={0.7} maximumValue={1.3} value={S.radiusScale} onSlidingComplete={v => patch({ radiusScale: v })}
+          minimumTrackTintColor={t.accent} maximumTrackTintColor={t.line} thumbTintColor={t.accent} />
+      </Card>
+
+      <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>🧭 Rondleiding</Text>
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+          Laat nieuwe gezinsleden bij hun eerste keer een korte rondleiding zien.</Text>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Btn t={t} small kind={S.tourEnabled ? "primary" : "ghost"} onPress={() => patch({ tourEnabled: true })}>Aan</Btn>
+          <Btn t={t} small kind={!S.tourEnabled ? "primary" : "ghost"} onPress={() => patch({ tourEnabled: false })}>Uit</Btn>
+        </View>
+        <View style={{ marginTop: 10 }}>
+          <Btn t={t} small kind="ghost" onPress={() => { setTourStep(0); setTourForced(true); }}>Bekijk de rondleiding opnieuw</Btn>
+        </View>
+      </Card>
+
+      {!S.premiumUnlocked ? (
+        <Card t={t} style={{ marginBottom: 12 }}>
+          <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>📢 Reclame</Text>
+          <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+            Reclame komt alleen ooit in beeld bij ouders, nooit bij kinderen. Hoe wil je het zien?
+            (Nog niet actief — dat vereist eerst een AdMob-account.)</Text>
+          {[
+            { v: "bottom-block", l: "Vast blokje onderaan iedere pagina" },
+            { v: "startup-then-free", l: "Eén langere ad bij opstarten, dan even reclamevrij" },
+            { v: "top-bottom-standard", l: "Standaard blok boven én onder" },
+          ].map(o => (
+            <TouchableOpacity key={o.v} onPress={() => patch({ adStyle: o.v })} style={{ flexDirection: "row",
+              alignItems: "center", gap: 10, paddingVertical: 8 }}>
+              <View style={{ width: 18, height: 18, borderRadius: 999, borderWidth: 2, borderColor: t.accent,
+                alignItems: "center", justifyContent: "center" }}>
+                {S.adStyle === o.v ? <View style={{ width: 10, height: 10, borderRadius: 999, backgroundColor: t.accent }} /> : null}
+              </View>
+              <Text style={{ fontSize: 13, color: t.ink, flex: 1 }}>{o.l}</Text>
+            </TouchableOpacity>
+          ))}
+        </Card>
+      ) : null}
+
+      <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>✨ Premium</Text>
+        {S.premiumUnlocked ? (
+          <Text style={{ fontSize: 13, color: t.green, fontWeight: "700" }}>Premium is actief voor jullie gezin. Onbeperkt klusjes!</Text>
+        ) : (
+          <>
+            <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+              Heb je een gratis code gekregen? Vul die hier in.</Text>
+            <TextInput style={inputStyle(t)} placeholder="Code" placeholderTextColor={t.sub} autoCapitalize="characters"
+              value={promoInput} onChangeText={setPromoInput} />
+            <Btn t={t} small onPress={redeemPromo}>Code inwisselen</Btn>
+          </>
+        )}
+      </Card>
+
+      <Card t={t}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>📮 Feedback & contact</Text>
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+          Vraag, probleem, of goed idee? Stuur het ons — we lezen alles mee.</Text>
+        <Btn t={t} small kind="ghost" onPress={() => Linking.openURL(
+          `mailto:heitjevooreenkarweitje@protonmail.com?subject=${encodeURIComponent("Feedback Heitje voor een karweitje (v" + APP_VERSION + ")")}`
+        )}>✉️ Stuur feedback</Btn>
+      </Card>
+    </>
+  );
+
   const tabs = [
-    { id: "feed", label: "Feed", icon: "🏠", C: Feed },
+    { id: "feed", label: "Home", icon: "🏠", C: Feed },
     { id: "klusjes", label: "Klusjes", icon: "✅", C: Chores },
     { id: "sparen", label: "Sparen", icon: "🐷", C: Sparen },
     { id: "gezin", label: "Gezin", icon: "👨‍👩‍👧‍👦", C: Gezin },
+    { id: "instellingen", label: "Instellingen", icon: "⚙️", C: Instellingen, ouderOnly: true },
   ];
-  const Screen = tabs.find(x => x.id === tab)?.C || Feed;
+  const visibleTabs = tabs.filter(x => !x.ouderOnly || role === "ouder");
+  const tabAllowed = (id) => visibleTabs.some(x => x.id === id);
+  const Screen = tabAllowed(tab) ? (tabs.find(x => x.id === tab)?.C || Feed) : Feed;
+
+  // Parallax: de achtergrond schuift trager dan de kaarten mee — geeft het "zwevende
+  // voorgrond over achtergrond"-gevoel. Blijft binnen de eigen afbeelding (clamp), dus
+  // nooit een lege rand, ook niet bij heel lang scrollen.
+  const bgTranslate = scrollY.interpolate({
+    inputRange: [0, WIN_H * 1.5],
+    outputRange: [0, -(WIN_H * 0.5)],
+    extrapolate: "clamp",
+  });
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
-      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+      <StatusBar style={isDark ? "light" : "dark"} />
       <Confetti show={confetti} />
 
-      {/* Header — prominent logo + profielwissel */}
-      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingTop: 10, paddingBottom: 12, gap: 10 }}>
+      <Animated.Image source={isDark ? BG_DARK : BG_LIGHT} resizeMode="cover" pointerEvents="none"
+        style={{ position: "absolute", top: 0, left: 0, right: 0, width: "100%", height: WIN_H * 1.5,
+          opacity: isDark ? 0.5 : 0.32, transform: [{ translateY: bgTranslate }] }} />
+
+      {/* Header — prominent logo + profielwissel, zelfde afronding als de rest van de balken/kaarten */}
+      <View style={{ flexDirection: "row", alignItems: "center", marginHorizontal: 12, marginTop: 6, marginBottom: 6,
+        paddingHorizontal: 20, paddingVertical: 10, gap: 10, backgroundColor: t.card, borderWidth: 1,
+        borderColor: t.line, borderRadius: t.radius ?? 20 }}>
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 40, fontWeight: "900", color: t.ink, letterSpacing: -2 }}>
+          <Text numberOfLines={1} style={{ fontSize: 40, fontWeight: "900", color: t.ink, letterSpacing: -2 }}>
             Heit<Text style={{ color: t.accent }}>je</Text></Text>
-          <Text style={{ fontSize: 15, fontWeight: "800", color: t.accent, letterSpacing: 0.2, marginTop: -3 }}>
+          <Text numberOfLines={1} style={{ fontSize: 15, fontWeight: "800", color: t.accent, letterSpacing: 0.2, marginTop: -3 }}>
             voor een karweitje</Text>
         </View>
-        <Chip t={t} big>💰 {fmt(S.balances[me])}</Chip>
+        <TouchableOpacity onPress={() => setHelpOpen(true)} style={{ width: 34, height: 34,
+          borderRadius: 999, backgroundColor: t.soft, borderWidth: 1, borderColor: t.line,
+          alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ fontSize: 15, fontWeight: "900", color: t.accent }}>ⓘ</Text>
+        </TouchableOpacity>
         <TouchableOpacity onPress={() => setMe(null)} style={{ flexDirection: "row", alignItems: "center", gap: 6,
           backgroundColor: t.soft, borderWidth: 1, borderColor: t.line, borderRadius: 999, paddingLeft: 8, paddingRight: 11, paddingVertical: 6 }}>
           <Text style={{ fontSize: 18 }}>{M.avatar}</Text>
@@ -719,14 +1138,33 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+      {showAds && S.adStyle === "startup-then-free" && !startupAdDismissed ? (
+        <View style={{ paddingHorizontal: 16, marginBottom: 4 }}>
+          <AdSlot t={t} />
+          <TouchableOpacity onPress={() => setStartupAdDismissed(true)} style={{ alignItems: "center", padding: 8 }}>
+            <Text style={{ color: t.sub, fontWeight: "700", fontSize: 12 }}>✕ Doorgaan (even reclamevrij)</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      {showAds && S.adStyle === "top-bottom-standard" ? (
+        <View style={{ paddingHorizontal: 16, marginBottom: 4 }}><AdSlot t={t} style={{ paddingVertical: 10 }} /></View>
+      ) : null}
+
+      <Animated.ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
+        scrollEventThrottle={16}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}>
         <Screen />
-      </ScrollView>
+      </Animated.ScrollView>
+
+      {/* Advertentie blijft vast onderaan (niet mee-scrollen met de content) */}
+      {showAds && (S.adStyle === "bottom-block" || S.adStyle === "top-bottom-standard") ? (
+        <View style={{ paddingHorizontal: 16, paddingTop: 6 }}><AdSlot t={t} /></View>
+      ) : null}
 
       {/* Tab bar */}
       <View style={{ flexDirection: "row", borderTopWidth: 1, borderColor: t.line, backgroundColor: t.card,
         paddingTop: 8, paddingBottom: 6 }}>
-        {tabs.map(x => (
+        {visibleTabs.map(x => (
           <TouchableOpacity key={x.id} onPress={() => setTab(x.id)} style={{ flex: 1, alignItems: "center", gap: 2 }}>
             <Text style={{ fontSize: 19 }}>{x.icon}</Text>
             <Text style={{ fontSize: 10.5, fontWeight: tab === x.id ? "800" : "600",
@@ -767,6 +1205,79 @@ export default function App() {
       <AddGoalModal t={t} visible={goalModal} onClose={() => setGoalModal(false)} pickImage={pickImage}
         onAdd={(goal) => { setS(s => ({ ...s, goals: { ...s.goals, [me]: goal } })); setGoalModal(false); }} />
       <RejectModal t={t} choreId={rejectFor} onClose={() => setRejectFor(null)} onReject={doReject} />
+      <AddKidModal t={t} visible={kidModal} onClose={() => setKidModal(false)} onAdd={addKid} />
+      <AddParentModal t={t} visible={parentModal} onClose={() => setParentModal(false)} onAdd={addParent} />
+
+      <Sheet t={t} visible={!!qrKid} onClose={() => setQrKid(null)} title={`🔗 ${S.members[qrKid]?.name || ""} delen`}>
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 14, textAlign: "center" }}>
+          Laat de andere ouder dit scannen bij "👶 Nieuw kind → 📷 Scan QR" om {S.members[qrKid]?.name} in één keer op hun toestel te zetten.</Text>
+        {qrKid ? (
+          <View style={{ alignItems: "center", marginBottom: 10 }}>
+            <View style={{ backgroundColor: "#fff", padding: 12, borderRadius: 12 }}>
+              <QRCode value={JSON.stringify({ heitjeKid: 1, name: S.members[qrKid].name, avatar: S.members[qrKid].avatar, age: S.members[qrKid].age })} size={200} />
+            </View>
+          </View>
+        ) : null}
+      </Sheet>
+      <GiftModal t={t} visible={giftModal} onClose={() => setGiftModal(false)} cur={S.cur}
+        kids={Object.entries(S.members).filter(([, m]) => m.role === "kind")} onRegister={receiveGift} />
+
+      <Modal visible={showTour} transparent animationType="fade" onRequestClose={closeTour}>
+        <View style={{ flex: 1, backgroundColor: "rgba(10,5,25,0.55)", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <View style={{ backgroundColor: t.card, borderRadius: 24, padding: 24, width: "100%", maxWidth: 360 }}>
+            <Text style={{ fontSize: 40, textAlign: "center", marginBottom: 10 }}>{TOUR_STEPS[tourStep]?.icon}</Text>
+            <Text style={{ fontWeight: "900", fontSize: 19, color: t.ink, textAlign: "center", marginBottom: 8 }}>
+              {TOUR_STEPS[tourStep]?.title}</Text>
+            <Text style={{ fontSize: 14, color: t.sub, textAlign: "center", lineHeight: 20, marginBottom: 18 }}>
+              {TOUR_STEPS[tourStep]?.body}</Text>
+            <View style={{ flexDirection: "row", justifyContent: "center", gap: 6, marginBottom: 18 }}>
+              {TOUR_STEPS.map((_, i) => (
+                <View key={i} style={{ width: 7, height: 7, borderRadius: 999,
+                  backgroundColor: i === tourStep ? t.accent : t.line }} />
+              ))}
+            </View>
+            <Btn t={t} onPress={() => tourStep < TOUR_STEPS.length - 1 ? setTourStep(s => s + 1) : closeTour()}>
+              {tourStep < TOUR_STEPS.length - 1 ? "Volgende" : "Klaar!"}</Btn>
+            <TouchableOpacity onPress={closeTour} style={{ alignItems: "center", padding: 12 }}>
+              <Text style={{ color: t.sub, fontWeight: "700", fontSize: 13 }}>Sla over</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={familySetupOpen} animationType="slide" onRequestClose={() => setFamilySetupOpen(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+          <FamilySetup t={t} jr={false} fam={fam} localState={S} onDone={onFamilySetupDone} onCancel={() => setFamilySetupOpen(false)} />
+        </SafeAreaView>
+      </Modal>
+
+      <Modal visible={helpOpen} animationType="slide" onRequestClose={() => setHelpOpen(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+          <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 10, flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Text style={{ fontWeight: "900", fontSize: 20, color: t.ink, flex: 1 }}>Hulp & uitleg</Text>
+            <TouchableOpacity onPress={() => setHelpOpen(false)}>
+              <Text style={{ color: t.accent, fontWeight: "800", fontSize: 15 }}>Sluiten</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={{ paddingHorizontal: 20, marginBottom: 10 }}>
+            <TextInput style={inputStyle(t)} placeholder="Zoek een optie (bijv. 'foto', 'thema', 'code')…"
+              placeholderTextColor={t.sub} value={helpQuery} onChangeText={setHelpQuery} />
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 0 }}>
+            {filteredHelp.length === 0 ? (
+              <Text style={{ color: t.sub, textAlign: "center", marginTop: 20 }}>Niets gevonden voor "{helpQuery}".</Text>
+            ) : filteredHelp.map((h, i) => (
+              <Card t={t} key={i} style={{ marginBottom: 10 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                  <Text style={{ fontSize: 20 }}>{h.icon}</Text>
+                  <Text style={{ fontWeight: "800", fontSize: 15, color: t.ink }}>{h.title}</Text>
+                </View>
+                <Text style={{ fontSize: 13, color: t.sub, lineHeight: 19 }}>{h.body}</Text>
+              </Card>
+            ))}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -802,7 +1313,7 @@ function AddChoreModal({ t, visible, onClose, onAdd }) {
   const [photoReq, setPhotoReq] = useState(false);
   const submit = () => {
     const cents = Math.round(parseFloat(euros.replace(",", ".")) * 100);
-    if (!title.trim() || !cents || cents <= 0) { Alert.alert("Vul een titel en een geldig bedrag in"); return; }
+    if (!title.trim() || !cents || cents <= 0) { alertX("Vul een titel en een geldig bedrag in"); return; }
     const checklist = checklistText.split("\n").map(s => s.trim()).filter(Boolean);
     const conditions = (note.trim() || checklist.length || photoReq || deadline.trim())
       ? { note: note.trim(), checklist, photoRequired: photoReq, deadline: deadline.trim() }
@@ -846,7 +1357,7 @@ function AddGoalModal({ t, visible, onClose, onAdd, pickImage }) {
   const [uri, setUri] = useState(null);
   const submit = () => {
     const target = Math.round(parseFloat(euros.replace(",", ".")) * 100);
-    if (!name.trim() || !target || target <= 0) { Alert.alert("Vul een naam en een geldig doelbedrag in"); return; }
+    if (!name.trim() || !target || target <= 0) { alertX("Vul een naam en een geldig doelbedrag in"); return; }
     onAdd({ name: name.trim(), emoji: "🎁", imageUri: uri, target, saved: 0, link: "", approved: false });
     setName(""); setEuros(""); setUri(null);
   };
@@ -873,5 +1384,310 @@ function RejectModal({ t, choreId, onClose, onReject }) {
         value={reason} onChangeText={setReason} />
       <Btn t={t} kind="danger" onPress={() => { onReject(choreId, reason.trim()); setReason(""); }}>Afkeuren met reden</Btn>
     </Sheet>
+  );
+}
+
+const KID_AVATARS = ["🦊", "🐸", "🐼", "🦄", "🐵", "🐯", "🐧", "🦁", "🐨", "🐰"];
+
+// Nieuw kind toevoegen. Vraagt de geboortedatum om de leeftijd te berekenen, maar
+// bewaart die geboortedatum zelf nergens — privacy by design, alleen de leeftijd blijft over.
+function AddKidModal({ t, visible, onClose, onAdd }) {
+  const [name, setName] = useState("");
+  const [avatar, setAvatar] = useState(KID_AVATARS[0]);
+  const [day, setDay] = useState("");
+  const [month, setMonth] = useState("");
+  const [year, setYear] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [camPerm, requestCamPerm] = useCameraPermissions();
+
+  const computeAge = () => {
+    const d = parseInt(day, 10), m = parseInt(month, 10), y = parseInt(year, 10);
+    if (!d || !m || !y || d < 1 || d > 31 || m < 1 || m > 12 || y < 1990) return null;
+    const birth = new Date(y, m - 1, d);
+    const now = new Date();
+    let age = now.getFullYear() - birth.getFullYear();
+    const hadBirthdayThisYear = now.getMonth() > birth.getMonth() ||
+      (now.getMonth() === birth.getMonth() && now.getDate() >= birth.getDate());
+    if (!hadBirthdayThisYear) age--;
+    return age >= 0 && age <= 17 ? age : null;
+  };
+
+  const submit = () => {
+    if (!name.trim()) { alertX("Vul een naam in"); return; }
+    const age = computeAge();
+    if (age === null) { alertX("Geboortedatum onjuist", "Vul een geldige geboortedatum in (0–17 jaar)."); return; }
+    onAdd({ name: name.trim(), avatar, age, role: "kind", streak: 0, color: "#7C3AED" });
+    setName(""); setAvatar(KID_AVATARS[0]); setDay(""); setMonth(""); setYear("");
+  };
+
+  // Kind toevoegen door de "Delen als QR"-code van een ander toestel te scannen — geen
+  // account nodig, gewoon de naam/avatar/leeftijd rechtstreeks overnemen.
+  const onBarcodeScanned = ({ data }) => {
+    if (!scanning) return;
+    setScanning(false);
+    try {
+      const parsed = JSON.parse(data);
+      if (!parsed.heitjeKid || !parsed.name) throw new Error("geen Heitje-kind-QR");
+      onAdd({ name: parsed.name, avatar: parsed.avatar || KID_AVATARS[0], age: parsed.age ?? null, role: "kind", streak: 0, color: "#7C3AED" });
+    } catch {
+      alertX("Geen geldige QR-code", "Dit is geen QR-code van 'Delen als QR' bij een kind.");
+    }
+  };
+
+  if (scanning) {
+    return (
+      <Sheet t={t} visible={visible} onClose={() => { setScanning(false); onClose(); }} title="📷 QR-code scannen">
+        {!camPerm?.granted ? (
+          <>
+            <Text style={{ color: t.sub, marginBottom: 12 }}>Camera-toestemming nodig om te scannen.</Text>
+            <Btn t={t} onPress={requestCamPerm}>Toestemming geven</Btn>
+          </>
+        ) : (
+          <View style={{ height: 340, borderRadius: 16, overflow: "hidden", marginBottom: 12 }}>
+            <CameraView style={{ flex: 1 }} barcodeScannerSettings={{ barcodeTypes: ["qr"] }} onBarcodeScanned={onBarcodeScanned} />
+          </View>
+        )}
+        <Btn t={t} kind="ghost" onPress={() => setScanning(false)}>Annuleren</Btn>
+      </Sheet>
+    );
+  }
+
+  return (
+    <Sheet t={t} visible={visible} onClose={onClose} title="👶 Nieuw kind toevoegen">
+      <View style={{ marginBottom: 14 }}>
+        <Btn t={t} small kind="ghost" onPress={() => setScanning(true)}>📷 Scan QR van ander toestel</Btn>
+      </View>
+      <TextInput style={inputStyle(t)} placeholder="Naam" placeholderTextColor={t.sub} value={name} onChangeText={setName} />
+      <Text style={{ fontSize: 12, color: t.sub, marginBottom: 6, fontWeight: "700" }}>Avatar</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        {KID_AVATARS.map(a => (
+          <TouchableOpacity key={a} onPress={() => setAvatar(a)} style={{ width: 40, height: 40, borderRadius: 999,
+            backgroundColor: t.soft, borderWidth: avatar === a ? 2 : 0, borderColor: t.accent,
+            alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ fontSize: 20 }}>{a}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={{ fontSize: 12, color: t.sub, marginBottom: 6, fontWeight: "700" }}>
+        Geboortedatum (alleen om de leeftijd te berekenen — wordt niet opgeslagen)</Text>
+      <TextInput style={inputStyle(t)} placeholder="Dag (bijv. 15)" placeholderTextColor={t.sub}
+        keyboardType="number-pad" maxLength={2} value={day} onChangeText={setDay} />
+      <TextInput style={inputStyle(t)} placeholder="Maand (bijv. 3)" placeholderTextColor={t.sub}
+        keyboardType="number-pad" maxLength={2} value={month} onChangeText={setMonth} />
+      <TextInput style={inputStyle(t)} placeholder="Jaar (bijv. 2015)" placeholderTextColor={t.sub}
+        keyboardType="number-pad" maxLength={4} value={year} onChangeText={setYear} />
+      <Btn t={t} onPress={submit}>Toevoegen</Btn>
+    </Sheet>
+  );
+}
+
+// Betaalverzoek voor externe familie (opa/oma/tante) — fase 6a. De app verwerkt zelf
+// nooit geld: dit maakt alleen een deelbaar berichtje, de ouder verstuurt het zelf via
+// WhatsApp/sms/mail en registreert het bedrag pas als het er echt is.
+function GiftModal({ t, visible, onClose, kids, cur, onRegister }) {
+  const [kidKey, setKidKey] = useState(null);
+  const [euros, setEuros] = useState("");
+  const [giver, setGiver] = useState("");
+
+  const cents = Math.round(parseFloat((euros || "0").replace(",", ".")) * 100) || 0;
+  const kidName = kidKey ? kids.find(([k]) => k === kidKey)?.[1]?.name : null;
+
+  const message = kidName
+    ? `Hoi! ${kidName} heeft goed geholpen in huis en zou het superleuk vinden als je een bijdrage stuurt${cents ? ` van ${fmt0(cents, cur)}` : ""}. Dat mag via Tikkie, een overschrijving, of contant — deze app verwerkt zelf geen betalingen, dus stuur het gewoon zoals jij dat altijd doet. Dankjewel! 💜`
+    : "";
+
+  const share = async () => {
+    if (!kidKey) { alertX("Kies eerst een kind"); return; }
+    try { await Share.share({ message }); } catch {}
+  };
+
+  const register = () => {
+    if (!kidKey || !cents) { alertX("Kies een kind en vul een bedrag in"); return; }
+    onRegister(kidKey, cents, giver.trim() || "Familie");
+    setKidKey(null); setEuros(""); setGiver("");
+  };
+
+  return (
+    <Sheet t={t} visible={visible} onClose={onClose} title="🎁 Bijdrage van familie">
+      <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+        Voor opa, oma, tante — iedereen buiten het gezin die iets wil geven. Geen geld door de app, alleen een deelbaar verzoek.</Text>
+      <Text style={{ fontSize: 12, color: t.sub, marginBottom: 6, fontWeight: "700" }}>Voor welk kind?</Text>
+      <View style={{ flexDirection: "row", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        {kids.map(([k, m]) => (
+          <TouchableOpacity key={k} onPress={() => setKidKey(k)} style={{ flexDirection: "row", alignItems: "center", gap: 6,
+            paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999,
+            backgroundColor: kidKey === k ? t.accent : t.soft }}>
+            <Text style={{ fontSize: 16 }}>{m.avatar}</Text>
+            <Text style={{ fontWeight: "700", fontSize: 13, color: kidKey === k ? "#fff" : t.ink }}>{m.name}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <TextInput style={inputStyle(t)} placeholder={`Bedrag (bijv. 10,00 ${cur})`} placeholderTextColor={t.sub}
+        keyboardType="decimal-pad" value={euros} onChangeText={setEuros} />
+      <TextInput style={inputStyle(t)} placeholder="Van wie? (optioneel, bijv. Opa Henk)" placeholderTextColor={t.sub}
+        value={giver} onChangeText={setGiver} />
+      <Btn t={t} kind="ghost" onPress={share}>📤 Deel verzoek</Btn>
+      <View style={{ height: 10 }} />
+      <Btn t={t} kind="success" onPress={register}>✅ Ontvangen — registreer bedrag</Btn>
+    </Sheet>
+  );
+}
+
+const PARENT_AVATARS = ["😎", "🌷", "🧑", "👩", "👨", "🧔"];
+
+// Nieuwe (mede-)ouder lokaal toevoegen. Geboortedatum is optioneel — de app heeft geen
+// leeftijdsafhankelijke weergave voor ouders, dus een leeg of onjuist ingevulde datum
+// blokkeert het toevoegen niet (alleen bij kinderen is de leeftijd verplicht, want die
+// bepaalt junior/tiener-weergave).
+function AddParentModal({ t, visible, onClose, onAdd }) {
+  const [name, setName] = useState("");
+  const [avatar, setAvatar] = useState(PARENT_AVATARS[0]);
+  const [day, setDay] = useState(""); const [month, setMonth] = useState(""); const [year, setYear] = useState("");
+  const submit = () => {
+    if (!name.trim()) { alertX("Vul een naam in"); return; }
+    const age = computeAgeFromDate(day, month, year, 120);
+    onAdd({ name: name.trim(), avatar, age, role: "ouder", streak: 0, color: "#7C3AED" });
+    setName(""); setAvatar(PARENT_AVATARS[0]); setDay(""); setMonth(""); setYear("");
+  };
+  return (
+    <Sheet t={t} visible={visible} onClose={onClose} title="🧑‍🤝‍🧑 Nieuwe ouder toevoegen">
+      <TextInput style={inputStyle(t)} placeholder="Naam" placeholderTextColor={t.sub} value={name} onChangeText={setName} />
+      <Text style={{ fontSize: 12, color: t.sub, marginBottom: 6, fontWeight: "700" }}>Avatar</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        {PARENT_AVATARS.map(a => (
+          <TouchableOpacity key={a} onPress={() => setAvatar(a)} style={{ width: 40, height: 40, borderRadius: 999,
+            backgroundColor: t.soft, borderWidth: avatar === a ? 2 : 0, borderColor: t.accent,
+            alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ fontSize: 20 }}>{a}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={{ fontSize: 12, color: t.sub, marginBottom: 6, fontWeight: "700" }}>
+        Geboortedatum (optioneel — wordt niet opgeslagen)</Text>
+      <TextInput style={inputStyle(t)} placeholder="Dag (bijv. 15)" placeholderTextColor={t.sub}
+        keyboardType="number-pad" maxLength={2} value={day} onChangeText={setDay} />
+      <TextInput style={inputStyle(t)} placeholder="Maand (bijv. 3)" placeholderTextColor={t.sub}
+        keyboardType="number-pad" maxLength={2} value={month} onChangeText={setMonth} />
+      <TextInput style={inputStyle(t)} placeholder="Jaar (bijv. 1985)" placeholderTextColor={t.sub}
+        keyboardType="number-pad" maxLength={4} value={year} onChangeText={setYear} />
+      <Btn t={t} onPress={submit}>Toevoegen</Btn>
+    </Sheet>
+  );
+}
+
+function computeAgeFromDate(day, month, year, maxAge = 17) {
+  const d = parseInt(day, 10), m = parseInt(month, 10), y = parseInt(year, 10);
+  const now = new Date();
+  if (!d || !m || !y || d < 1 || d > 31 || m < 1 || m > 12 || y < now.getFullYear() - 120) return null;
+  const birth = new Date(y, m - 1, d);
+  let age = now.getFullYear() - birth.getFullYear();
+  const hadBirthdayThisYear = now.getMonth() > birth.getMonth() ||
+    (now.getMonth() === birth.getMonth() && now.getDate() >= birth.getDate());
+  if (!hadBirthdayThisYear) age--;
+  return age >= 0 && age <= maxAge ? age : null;
+}
+
+const KID_COLORS = ["#7C3AED", "#0EA5E9", "#F59E0B", "#EC4899", "#16A34A", "#EF4444"];
+
+// Allereerste keer opstarten: welkom + korte uitleg, dan zelf de echte namen invoeren
+// in plaats van de demo-namen (Emma/Daan/Papa/Mama) te houden.
+function WelcomeWizard({ t, onComplete }) {
+  const [stage, setStage] = useState("welcome"); // "welcome" | "names"
+  const [parentName, setParentName] = useState("");
+  const [parentAvatar, setParentAvatar] = useState(PARENT_AVATARS[0]);
+  const [kids, setKids] = useState([]); // [{name, avatar, age}]
+  const [kidName, setKidName] = useState("");
+  const [kidAvatar, setKidAvatar] = useState(KID_AVATARS[0]);
+  const [day, setDay] = useState(""); const [month, setMonth] = useState(""); const [year, setYear] = useState("");
+
+  const addKidToList = () => {
+    if (!kidName.trim()) { alertX("Vul een naam in voor dit kind"); return; }
+    const age = computeAgeFromDate(day, month, year);
+    if (age === null) { alertX("Geboortedatum onjuist", "Vul een geldige geboortedatum in (0–17 jaar)."); return; }
+    setKids(ks => [...ks, { name: kidName.trim(), avatar: kidAvatar, age }]);
+    setKidName(""); setKidAvatar(KID_AVATARS[(kids.length + 1) % KID_AVATARS.length]); setDay(""); setMonth(""); setYear("");
+  };
+
+  const finish = () => {
+    if (!parentName.trim()) { alertX("Vul jouw naam in"); return; }
+    const members = {}; const balances = {};
+    const parentKey = `${parentName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}`;
+    members[parentKey] = { name: parentName.trim(), avatar: parentAvatar, age: null, role: "ouder", streak: 0, color: "#7C3AED" };
+    balances[parentKey] = 0;
+    kids.forEach((k, i) => {
+      const key = `${k.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}-${i}`;
+      members[key] = { name: k.name, avatar: k.avatar, age: k.age, role: "kind", streak: 0, color: KID_COLORS[i % KID_COLORS.length] };
+      balances[key] = 0;
+    });
+    onComplete(members, balances);
+  };
+
+  if (stage === "welcome") {
+    return (
+      <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 28 }}>
+        <Text style={{ fontSize: 44, textAlign: "center", marginBottom: 16 }}>🏠</Text>
+        <Text style={{ fontSize: 30, fontWeight: "900", color: t.ink, textAlign: "center", letterSpacing: -1 }}>
+          Welkom bij Heit<Text style={{ color: t.accent }}>je</Text>!</Text>
+        <Text style={{ fontSize: 15, fontWeight: "700", color: t.accent, textAlign: "center", marginTop: 6 }}>
+          voor een karweitje</Text>
+        <Text style={{ fontSize: 19, fontWeight: "700", color: t.ink, textAlign: "center", lineHeight: 26, marginTop: 14, marginBottom: 26 }}>
+          Met klusjes je zakgeld verdienen op een leuke manier</Text>
+        <Btn t={t} onPress={() => setStage("names")}>Aan de slag</Btn>
+      </ScrollView>
+    );
+  }
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: 24 }}>
+      <Text style={{ fontSize: 22, fontWeight: "900", color: t.ink, marginBottom: 6 }}>Wie zit er in het gezin?</Text>
+      <Text style={{ fontSize: 13, color: t.sub, marginBottom: 18 }}>Vul jullie echte namen in — je kan later altijd nog iemand toevoegen.</Text>
+
+      <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 8 }}>Jouw naam (ouder)</Text>
+      <TextInput style={inputStyle(t)} placeholder="Bijv. Wouter" placeholderTextColor={t.sub} value={parentName} onChangeText={setParentName} />
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 22 }}>
+        {PARENT_AVATARS.map(a => (
+          <TouchableOpacity key={a} onPress={() => setParentAvatar(a)} style={{ width: 40, height: 40, borderRadius: 999,
+            backgroundColor: t.soft, borderWidth: parentAvatar === a ? 2 : 0, borderColor: t.accent,
+            alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ fontSize: 20 }}>{a}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 8 }}>Kinderen toevoegen (optioneel hier)</Text>
+      {kids.map((k, i) => (
+        <View key={i} style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: t.soft,
+          borderRadius: 12, padding: 10, marginBottom: 8 }}>
+          <Text style={{ fontSize: 18 }}>{k.avatar}</Text>
+          <Text style={{ flex: 1, fontWeight: "700", color: t.ink }}>{k.name} · {k.age} jr</Text>
+          <TouchableOpacity onPress={() => setKids(ks => ks.filter((_, j) => j !== i))}>
+            <Text style={{ color: t.danger, fontWeight: "700" }}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+      <Card t={t} style={{ marginBottom: 20 }}>
+        <TextInput style={inputStyle(t)} placeholder="Naam van kind" placeholderTextColor={t.sub} value={kidName} onChangeText={setKidName} />
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+          {KID_AVATARS.map(a => (
+            <TouchableOpacity key={a} onPress={() => setKidAvatar(a)} style={{ width: 36, height: 36, borderRadius: 999,
+              backgroundColor: t.card, borderWidth: kidAvatar === a ? 2 : 0, borderColor: t.accent,
+              alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ fontSize: 17 }}>{a}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={{ fontSize: 11.5, color: t.sub, marginBottom: 6, fontWeight: "700" }}>
+          Geboortedatum (alleen voor de leeftijd — wordt niet opgeslagen)</Text>
+        <TextInput style={inputStyle(t)} placeholder="Dag (bijv. 15)" placeholderTextColor={t.sub}
+          keyboardType="number-pad" maxLength={2} value={day} onChangeText={setDay} />
+        <TextInput style={inputStyle(t)} placeholder="Maand (bijv. 3)" placeholderTextColor={t.sub}
+          keyboardType="number-pad" maxLength={2} value={month} onChangeText={setMonth} />
+        <TextInput style={[inputStyle(t), { marginBottom: 10 }]} placeholder="Jaar (bijv. 2015)" placeholderTextColor={t.sub}
+          keyboardType="number-pad" maxLength={4} value={year} onChangeText={setYear} />
+        <Btn t={t} small kind="ghost" onPress={addKidToList}>➕ Kind toevoegen aan lijst</Btn>
+      </Card>
+
+      <Btn t={t} onPress={finish}>Klaar, we beginnen! 🎉</Btn>
+    </ScrollView>
   );
 }
