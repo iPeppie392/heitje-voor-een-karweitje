@@ -27,6 +27,10 @@ alter table members add constraint kids_have_no_auth_identity
 alter table family_invites add column if not exists role text not null default 'ouder'
   check (role in ('ouder','gast'));
 
+-- Postgres staat geen create-or-replace toe die het OUT-parameter-type wijzigt (hier:
+-- er komt een derde kolom "role" bij) — eerst de oude versie expliciet weggooien.
+drop function if exists public.redeem_invite(text, text, text);
+
 create or replace function public.redeem_invite(invite_code text, parent_name text,
   parent_avatar text default '😎')
 returns table(family_id uuid, member_id uuid, role text)
