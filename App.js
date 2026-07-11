@@ -1953,22 +1953,35 @@ const inputStyle = (t) => ({ borderWidth: 1, borderColor: t.line, borderRadius: 
 function PricingIntro({ t, onContinue }) {
   const Row = ({ icon, title, body }) => (
     <Card t={t} style={{ marginBottom: 12 }}>
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
-        <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: t.soft,
-          alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Text style={{ fontSize: 22 }}>{icon}</Text></View>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 14 }}>
+        <View style={{ width: 46, height: 46, borderRadius: 15, backgroundColor: t.soft,
+          borderWidth: 1, borderColor: t.line, alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Text style={{ fontSize: 23 }}>{icon}</Text></View>
         <View style={{ flex: 1 }}>
           <Text style={{ fontWeight: "800", fontSize: 15, color: t.ink, marginBottom: 4 }}>{title}</Text>
-          <Text style={{ fontSize: 13, color: t.sub, lineHeight: 18 }}>{body}</Text>
+          <Text style={{ fontSize: 13, color: t.sub, lineHeight: 19 }}>{body}</Text>
         </View>
       </View>
     </Card>
   );
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 40 }}>
-      <Text style={{ fontSize: 24, fontWeight: "900", color: t.ink, marginBottom: 4 }}>Hoe Heitje betaald wordt</Text>
-      <Text style={{ fontSize: 13, color: t.sub, marginBottom: 20 }}>
-        Voordat je begint: dit is precies hoe reclame en kosten werken. Geen verrassingen achteraf.</Text>
+    <ScrollView contentContainerStyle={{ padding: 24, paddingTop: 48, flexGrow: 1 }}>
+      <View style={{ alignItems: "center", marginBottom: 28 }}>
+        <Text style={{ fontSize: 34, fontWeight: "900", color: t.ink, letterSpacing: -1.5 }}>
+          Heit<Text style={{ color: t.accent }}>je</Text></Text>
+        <Text style={{ fontSize: 13, fontWeight: "800", color: t.accent, letterSpacing: 0.2, marginTop: -2 }}>
+          voor een karweitje</Text>
+      </View>
+
+      <View style={{ alignItems: "center", marginBottom: 24 }}>
+        <View style={{ backgroundColor: t.soft, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 6, marginBottom: 12 }}>
+          <Text style={{ fontSize: 12, fontWeight: "800", color: t.accent }}>💶 VOORDAT JE BEGINT</Text>
+        </View>
+        <Text style={{ fontSize: 22, fontWeight: "900", color: t.ink, textAlign: "center", marginBottom: 6 }}>
+          Hoe Heitje betaald wordt</Text>
+        <Text style={{ fontSize: 13.5, color: t.sub, textAlign: "center", lineHeight: 19 }}>
+          Precies hoe reclame en kosten werken. Geen verrassingen achteraf.</Text>
+      </View>
 
       <Row icon="🧒" title="Kinderen: altijd gratis, nooit reclame"
         body="Een kindprofiel ziet nooit advertenties en heeft nooit kosten — geen uitzondering, geen instelling die dit ooit kan veranderen." />
@@ -1977,8 +1990,18 @@ function PricingIntro({ t, onContinue }) {
       <Row icon="🧓" title="Gasten van buitenaf: zelfde principe"
         body="Opa, oma, een oom/tante of vriend die als gast een klusje voorstelt, ziet ook af en toe reclame — of kiest voor reclamevrij voor € 0,99 per maand. (Binnenkort beschikbaar.)" />
 
-      <View style={{ marginTop: 8 }}>
+      <View style={{ marginTop: 12, marginBottom: 24 }}>
         <Btn t={t} onPress={onContinue}>Begrepen, verder →</Btn>
+      </View>
+
+      <View style={{ flex: 1 }} />
+      <View style={{ flexDirection: "row", justifyContent: "center", gap: 16, marginTop: 12 }}>
+        <TouchableOpacity onPress={() => Linking.openURL(`${LEGAL_BASE}/privacy.html`)}>
+          <Text style={{ color: t.sub, fontSize: 12, textDecorationLine: "underline" }}>Privacybeleid</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => Linking.openURL(`${LEGAL_BASE}/voorwaarden.html`)}>
+          <Text style={{ color: t.sub, fontSize: 12, textDecorationLine: "underline" }}>Voorwaarden</Text>
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
