@@ -36,6 +36,7 @@ export const DEFAULT_STATE = {
   choreOffers: [],                 // klusjes voorgesteld door gasten (opa/oma/etc.), wacht op ouder-goedkeuring
   lastMe: null,       // laatst gekozen profiel op dit toestel → automatisch inloggen
   setupDone: false,   // heeft dit toestel de welkom-wizard (echte namen invoeren) al doorlopen?
+  pricingSeen: false, // heeft dit toestel de kosten/reclame-uitleg (eerste pagina) al gezien?
 
   // Fase 1 — backend/gezin-koppeling. Blijven allemaal null/false zolang er geen
   // gezin-account is aangemaakt: de app werkt dan gewoon zoals altijd, 100% lokaal.

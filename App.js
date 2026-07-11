@@ -67,9 +67,21 @@ export default function App() {
   const [startupAdDismissed, setStartupAdDismissed] = useState(false); // alleen voor deze sessie
   const [tourStep, setTourStep] = useState(0);
   const [tourForced, setTourForced] = useState(false); // (i)-knop of "opnieuw bekijken" negeert tourSeen
+  const [pricingForced, setPricingForced] = useState(false); // "Bekijk prijzen opnieuw" in Instellingen
   const scrollY = useRef(new Animated.Value(0)).current; // achtergrond-parallax op het hoofdscherm
 
-  useEffect(() => { loadState().then(s => { setS(s); setLoaded(true); }); }, []);
+  // Een apart demo-linkje (?demo=1, alleen gebruikt door de marketingsite) begint altijd
+  // vers — negeert/wist wat er eventueel al lokaal opgeslagen stond. De gewone app-URL
+  // (zonder dit param) blijft normaal gedrag houden: een echt gezin raakt hier nooit iets door kwijt.
+  useEffect(() => {
+    const isDemoLink = Platform.OS === "web" && typeof window !== "undefined"
+      && new URLSearchParams(window.location.search).get("demo") === "1";
+    if (isDemoLink) {
+      resetState().then(() => { setS(DEFAULT_STATE); setLoaded(true); });
+    } else {
+      loadState().then(s => { setS(s); setLoaded(true); });
+    }
+  }, []);
   useEffect(() => { if (loaded) saveState(S); }, [S, loaded]);
 
   // Fase 1 — gezin-account (optioneel): zonder .env-config doet dit niets en blijft
@@ -602,6 +614,17 @@ export default function App() {
 
   // ----- Profile picker (first launch / switch) -----
   if (!loaded) return <View style={{ flex: 1, backgroundColor: light.bg }} />;
+
+  // Allereerste pagina, vóór alles anders: eerlijke uitleg over kosten en reclame. Eenmalig
+  // per toestel (net als de rondleiding), maar via Instellingen altijd opnieuw te bekijken.
+  if (!S.pricingSeen || pricingForced) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+        <StatusBar style={isDark ? "light" : "dark"} />
+        <PricingIntro t={t} onContinue={() => { patch({ pricingSeen: true }); setPricingForced(false); }} />
+      </SafeAreaView>
+    );
+  }
 
   // Zolang de gezinsleden nog exact de ongewijzigde demo-set zijn (Emma/Daan/Vader/Moeder),
   // is er verplicht eerst een echte ouder aan te maken — ongeacht lastMe/setupDone, want
@@ -1583,6 +1606,13 @@ export default function App() {
       </Card>
 
       <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>💶 Reclame & kosten</Text>
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+          Kinderen altijd gratis en zonder reclame. Ouders en gasten: gratis met reclame, of reclamevrij voor een klein bedrag.</Text>
+        <Btn t={t} small kind="ghost" onPress={() => setPricingForced(true)}>Bekijk prijzen opnieuw</Btn>
+      </Card>
+
+      <Card t={t} style={{ marginBottom: 12 }}>
         <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>📚 Huiswerk voor kinderen</Text>
         <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
           Zet uit om de hele Huiswerk-tab voor kinderen te verbergen. Jij blijft 'm als ouder gewoon zien.</Text>
@@ -1917,6 +1947,42 @@ function Sheet({ t, visible, onClose, title, children }) {
 
 const inputStyle = (t) => ({ borderWidth: 1, borderColor: t.line, borderRadius: 12, padding: 12,
   color: t.ink, marginBottom: 10, fontSize: 15 });
+
+// Allereerste pagina, vóór de profielkeuze — eerlijke uitleg over reclame en kosten,
+// zodat niemand achteraf voor een verrassing komt te staan. Eenmalig per toestel.
+function PricingIntro({ t, onContinue }) {
+  const Row = ({ icon, title, body }) => (
+    <Card t={t} style={{ marginBottom: 12 }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 12 }}>
+        <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: t.soft,
+          alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Text style={{ fontSize: 22 }}>{icon}</Text></View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontWeight: "800", fontSize: 15, color: t.ink, marginBottom: 4 }}>{title}</Text>
+          <Text style={{ fontSize: 13, color: t.sub, lineHeight: 18 }}>{body}</Text>
+        </View>
+      </View>
+    </Card>
+  );
+  return (
+    <ScrollView contentContainerStyle={{ padding: 20, paddingTop: 40 }}>
+      <Text style={{ fontSize: 24, fontWeight: "900", color: t.ink, marginBottom: 4 }}>Hoe Heitje betaald wordt</Text>
+      <Text style={{ fontSize: 13, color: t.sub, marginBottom: 20 }}>
+        Voordat je begint: dit is precies hoe reclame en kosten werken. Geen verrassingen achteraf.</Text>
+
+      <Row icon="🧒" title="Kinderen: altijd gratis, nooit reclame"
+        body="Een kindprofiel ziet nooit advertenties en heeft nooit kosten — geen uitzondering, geen instelling die dit ooit kan veranderen." />
+      <Row icon="👨‍👩‍👧" title="Ouders: gratis met reclame, of reclamevrij"
+        body="Als ouder zie je af en toe een klein, duidelijk gemarkeerd advertentieblokje. Reclame helemaal weg kan voor € 0,99 per maand, of eenmalig € 9,99. (Binnenkort beschikbaar in de app.)" />
+      <Row icon="🧓" title="Gasten van buitenaf: zelfde principe"
+        body="Opa, oma, een oom/tante of vriend die als gast een klusje voorstelt, ziet ook af en toe reclame — of kiest voor reclamevrij voor € 0,99 per maand. (Binnenkort beschikbaar.)" />
+
+      <View style={{ marginTop: 8 }}>
+        <Btn t={t} onPress={onContinue}>Begrepen, verder →</Btn>
+      </View>
+    </ScrollView>
+  );
+}
 
 // Losstaand, minimaal scherm voor een gast (opa/oma/oom/tante/vriend) — geen toegang
 // tot de rest van de app, alleen een klusje voorstellen en de eigen voorstellen terugzien.
