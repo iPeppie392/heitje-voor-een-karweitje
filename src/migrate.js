@@ -15,6 +15,7 @@ export async function migrateLocalStateToFamily(localState, familyId, newParentM
     const { data, error } = await supabase.from("members").insert({
       family_id: familyId, name: m.name, avatar: m.avatar, age: m.age,
       role: m.role, streak: m.streak || 0, color: m.color,
+      screentime_minutes: localState.screenBalances?.[localKey] || 0,
     }).select("id").single();
     if (error) throw error;
     idMap[localKey] = data.id;
@@ -62,13 +63,27 @@ export async function migrateLocalStateToFamily(localState, familyId, newParentM
     if (!memberId) continue;
     await supabase.from("homework_items").insert({
       family_id: familyId, member_id: memberId, title: h.title, subject: h.subject || null,
-      due_date: h.dueDate, done: h.done, cents: h.cents ?? null, reward_approved: h.rewardApproved || false,
+      due_date: h.dueDate, done: h.done, cents: h.cents ?? null, minutes: h.minutes ?? null,
+      reward_approved: h.rewardApproved || false,
     });
   }
-  // Alleen bijwerken als het toestel de schakelaar al had aanstaan — anders blijft de
-  // nieuwe families-rij gewoon op zijn eigen standaard (uit).
-  if (localState.homeworkRewardsEnabled) {
-    await supabase.from("families").update({ homework_rewards_enabled: true }).eq("id", familyId);
+
+  for (const [kidKey, g] of Object.entries(localState.screenGoals || {})) {
+    const kidId = idMap[kidKey];
+    if (!kidId) continue;
+    await supabase.from("screentime_goals").insert({
+      family_id: familyId, kid_id: kidId, name: g.name, emoji: g.emoji,
+      image_uri: g.imageUri, target_minutes: g.target, saved_minutes: g.saved, link: g.link, approved: g.approved,
+    });
+  }
+
+  // Alleen bijwerken als het toestel al afweek van de nieuwe standaard (aan/minuten) —
+  // anders blijft de nieuwe families-rij gewoon op zijn eigen standaard staan.
+  const familyUpdates = {};
+  if (localState.homeworkEnabled === false) familyUpdates.homework_enabled = false;
+  if (localState.homeworkRewardMode === "money") familyUpdates.homework_reward_mode = "money";
+  if (Object.keys(familyUpdates).length) {
+    await supabase.from("families").update(familyUpdates).eq("id", familyId);
   }
 
   return idMap;

@@ -52,7 +52,9 @@ export default function App() {
   const [confetti, setConfetti] = useState(false);
   const [choreModal, setChoreModal] = useState(false);
   const [goalModal, setGoalModal] = useState(false);
+  const [screenGoalModal, setScreenGoalModal] = useState(false);
   const [homeworkModal, setHomeworkModal] = useState(false);
+  const [timerInput, setTimerInput] = useState("");
   const [rejectFor, setRejectFor] = useState(null); // chore id being rejected
   const [familySetupOpen, setFamilySetupOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState(null);
@@ -118,6 +120,7 @@ export default function App() {
   const pick = (k) => { setMe(k); patch({ lastMe: k }); };
 
   const fmt = (c) => fmt0(c, S.cur);
+  const fmtMin = (m) => `${m} min`;
   const M = me ? S.members[me] : null;
   const role = M?.role;
   const jr = role === "kind" && M.age < 12; // junior (<12): motivation bar; teen: ring with %
@@ -157,7 +160,8 @@ export default function App() {
       { icon: "📝", title: "Voorwaarden & checklist", body: "Een ouder kan bij het aanmaken van een klusje een checklist, een deadline en een notitie toevoegen. Het kind moet alle punten afvinken voordat het klusje afgerond kan worden." },
       { icon: "🧐", title: "Goedkeuren & afkeuren", body: "Alleen ouders keuren klusjes goed of af. Bij afkeuren moet je altijd een reden opgeven, zodat het kind weet wat er nog moet gebeuren." },
       { icon: "🐷", title: "Sparen", body: "Elk kind kan één spaardoel instellen met een naam, bedrag en optioneel een foto. Een ouder moet het doel eerst goedkeuren voordat de winkellink aanklikbaar wordt (ouderlijke poort)." },
-      { icon: "📚", title: "Huiswerk", body: "Een agenda per gezinslid. Standaard puur een planner — zonder zakgeld. Een ouder kan bij Instellingen zakgeld voor huiswerk aanzetten en dan per taak zelf een beloning instellen; kinderen krijgen daar zelf geen invoerveld voor." },
+      { icon: "📚", title: "Huiswerk", body: "Een agenda per gezinslid. Standaard verdien je er schermtijd (in minuten) mee — een ouder kan bij Instellingen wisselen naar geld, of de hele Huiswerk-tab uitzetten voor kinderen. Per taak stelt een ouder zelf, stilletjes, een beloning in; kinderen krijgen daar zelf geen invoerveld voor." },
+      { icon: "⏱️", title: "Schermtijd sparen & gebruiken", body: "Verdiende minuten staan bij Sparen. Daar kun je ook een schermtijd-spaardoel instellen (naast je geld-spaardoel) en een timer starten: de gekozen minuten gaan er meteen af van je tegoed, ook als je eerder stopt." },
       { icon: "💰", title: "Zakgeld & uitbetalen", body: "De app rekent alleen in cijfers — er gaat nooit echt geld door de app. Zodra je je kind fysiek hebt uitbetaald (contant, tikkie, etc.), registreer je dat bij Gezin → 'Uitbetaald — registreer'." },
       { icon: "👨‍👩‍👧‍👦", title: "Ouders verdienen geen zakgeld", body: "Ouders maken en beheren klusjes, maar kunnen ze niet zelf claimen of uitvoeren — alleen kinderen verdienen zakgeld." },
       { icon: "👶", title: "Nieuw kind toevoegen", body: "Bij Gezin → '👶 Nieuw kind' vul je een naam, avatar en geboortedatum in (dag, maand, jaar). De geboortedatum wordt alleen gebruikt om de leeftijd te berekenen en daarna nergens opgeslagen." },
@@ -453,7 +457,7 @@ export default function App() {
     if (S.familyId && fam.backendConfigured) {
       push.upsertHomework(S.familyId, {
         id: item.id, member_id: item.memberId, title: item.title, subject: item.subject || null,
-        due_date: item.dueDate, done: false, cents: item.cents ?? null,
+        due_date: item.dueDate, done: false, cents: item.cents ?? null, minutes: item.minutes ?? null,
       });
     }
   };
@@ -464,7 +468,7 @@ export default function App() {
     if (S.familyId && fam.backendConfigured) push.updateHomework(h.id, { done });
     // Alleen een melding sturen als er een beloning aan hangt en het net is afgevinkt —
     // anders krijgen ouders bij elk kaal huiswerk-vinkje een melding.
-    if (done && h.cents) {
+    if (done && (h.cents || h.minutes)) {
       for (const parent of Object.values(S.members).filter(m => m.role === "ouder")) {
         if (parent.push_token) {
           sendPushNotification(parent.push_token, "Huiswerk wacht op goedkeuring",
@@ -474,9 +478,27 @@ export default function App() {
     }
   };
 
-  // Geen sparen/saldo-keuze zoals bij klusjes — huiswerkgeld gaat direct naar het saldo,
-  // bewust een kleinere stap dan de klusjes-flow.
+  // Geen sparen/saldo-keuze zoals bij klusjes — huiswerkbeloning gaat direct naar het
+  // saldo/tegoed, bewust een kleinere stap dan de klusjes-flow. Vertakt op welke van de
+  // twee valuta's aan dit item hangt (nooit allebei).
   const approveHomeworkReward = (h) => {
+    if (h.minutes) {
+      setS(s => ({
+        ...s,
+        homework: s.homework.map(x => x.id === h.id ? { ...x, rewardApproved: true } : x),
+        screenBalances: { ...s.screenBalances, [h.memberId]: (s.screenBalances[h.memberId] || 0) + h.minutes },
+      }));
+      if (S.familyId && fam.backendConfigured) {
+        push.updateHomework(h.id, { reward_approved: true });
+        push.adjustScreentime(h.memberId, h.minutes);
+      }
+      const member = S.members[h.memberId];
+      if (member?.push_token) {
+        sendPushNotification(member.push_token, "Schermtijd goedgekeurd! 🎉",
+          `${fmtMin(h.minutes)} voor "${h.title}" staat op je tegoed.`, { homeworkId: h.id });
+      }
+      return;
+    }
     setS(s => ({
       ...s,
       homework: s.homework.map(x => x.id === h.id ? { ...x, rewardApproved: true } : x),
@@ -492,6 +514,36 @@ export default function App() {
         `${fmt(h.cents)} voor "${h.title}" staat op je saldo.`, { homeworkId: h.id });
     }
   };
+
+  // ----- Schermtijd: spaardoel + timer -----
+  const approveScreenGoal = (kid) => {
+    setS(s => ({ ...s, screenGoals: { ...s.screenGoals, [kid]: { ...s.screenGoals[kid], approved: true } } }));
+    const g = S.screenGoals[kid];
+    if (S.familyId && fam.backendConfigured && g?.id) push.updateScreenGoal(g.id, { approved: true });
+  };
+
+  const [screenTimer, setScreenTimer] = useState(null); // { totalSeconds, remaining } — puur lokaal, niet bewaard
+  const startScreenTimer = (minutes) => {
+    const bal = S.screenBalances[me] || 0;
+    if (minutes <= 0 || minutes > bal) return;
+    setS(s => ({ ...s, screenBalances: { ...s.screenBalances, [me]: bal - minutes } }));
+    if (S.familyId && fam.backendConfigured) push.adjustScreentime(me, -minutes);
+    setScreenTimer({ totalSeconds: minutes * 60, remaining: minutes * 60 });
+  };
+  useEffect(() => {
+    if (!screenTimer || screenTimer.remaining <= 0) return;
+    const t0 = setTimeout(() => {
+      setScreenTimer(s => s ? { ...s, remaining: s.remaining - 1 } : s);
+    }, 1000);
+    return () => clearTimeout(t0);
+  }, [screenTimer]);
+  useEffect(() => {
+    if (screenTimer && screenTimer.remaining <= 0) {
+      boom();
+      alertX("Tijd is op! ⏰", "Je schermtijd is verbruikt.");
+      setScreenTimer(null);
+    }
+  }, [screenTimer?.remaining]);
 
   // ----- UI helpers -----
   const kids = Object.keys(S.members).filter(k => S.members[k].role === "kind");
@@ -527,7 +579,7 @@ export default function App() {
           // Een echte verse start: ook de demo-klusjes/spaardoelen/feed weg, niet
           // alleen de demo-namen — anders blijft "Vaatwasser uitruimen" van Emma/Daan
           // gewoon in de pool staan voor een gezin dat nog nooit klusjes had.
-          setS(s => ({ ...s, members, balances, chores: [], goals: {}, feed: [],
+          setS(s => ({ ...s, members, balances, chores: [], goals: {}, feed: [], screenGoals: {},
             setupDone: true, lastMe: null }));
           setMe(null);
         }} />
@@ -745,6 +797,65 @@ export default function App() {
     );
   };
 
+  // Spiegelt GoalCard, maar dan voor het schermtijd-spaardoel (los tegoed, losse tabel) —
+  // een gratis gezin mag naast het geld-spaardoel ook hier één spaardoel hebben ("extra").
+  const ScreenGoalCard = ({ kid, own }) => {
+    const g = S.screenGoals[kid];
+    const m = S.members[kid];
+    if (!g) {
+      return kid === me ? (
+        <Card t={t} onPress={() => setScreenGoalModal(true)} style={{ marginBottom: 12, alignItems: "center", borderStyle: "dashed" }}>
+          <Text style={{ fontSize: 26 }}>🎮</Text>
+          <Text style={{ fontWeight: "800", fontSize: 15, color: t.ink }}>＋ Schermtijd-spaardoel</Text>
+          <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Papa of mama keurt het daarna goed</Text>
+        </Card>
+      ) : null;
+    }
+    const pct = g.saved / g.target;
+    if (own) {
+      return (
+        <Card t={t} style={{ marginBottom: 12, alignItems: "center", padding: 24 }}>
+          <Progress pct={pct} uri={g.imageUri} emoji={g.emoji} big />
+          <Text style={{ fontWeight: "800", fontSize: jr ? 20 : 18, color: t.ink, marginTop: 18 }}>{g.name}</Text>
+          <Amount t={t} size={jr ? 48 : 44}>{fmtMin(g.saved)}</Amount>
+          <Text style={{ fontSize: 16, fontWeight: "700", color: t.sub, marginTop: 4 }}>
+            van {fmtMin(g.target)}{!jr && g.saved < g.target ? ` · nog ${fmtMin(g.target - g.saved)}` : ""}</Text>
+          {g.saved >= g.target ? (
+            <Text style={{ marginTop: 10, fontWeight: "800", color: t.green, fontSize: 16, textAlign: "center" }}>
+              Doel bereikt! 🎉</Text>
+          ) : null}
+          <View style={{ marginTop: 12 }}>
+            {g.approved
+              ? <Chip t={t}>🔗 Doel goedgekeurd ✓</Chip>
+              : <Chip t={t} color={t.amber}>⏳ Wacht op goedkeuring</Chip>}
+          </View>
+        </Card>
+      );
+    }
+    return (
+      <Card t={t} style={{ marginBottom: 12 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <View style={{ width: 64, height: 64, borderRadius: 16, overflow: "hidden" }}>
+            <PhotoBox t={t} uri={g.imageUri} emoji={g.emoji || "🎮"} h={64} r={16} /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink }}>{m.avatar} {m.name} · {g.name}</Text>
+            <Amount t={t}>{fmtMin(g.saved)} <Text style={{ fontSize: 13, color: t.sub, fontWeight: "700" }}>/ {fmtMin(g.target)}</Text></Amount>
+            <View style={{ marginTop: 6 }}>
+              {jr ? <JuniorBar t={t} pct={pct} /> : (
+                <View style={{ height: 8, borderRadius: 999, backgroundColor: t.soft }}>
+                  <View style={{ width: `${Math.min(100, pct * 100)}%`, height: "100%", borderRadius: 999, backgroundColor: t.accent }} />
+                </View>
+              )}
+            </View>
+            {!g.approved ? <Text style={{ fontSize: 12, color: t.amber, fontWeight: "700", marginTop: 6 }}>⏳ Doel wacht op goedkeuring</Text> : null}
+          </View>
+          {role === "ouder" && !g.approved
+            ? <Btn t={t} small kind="success" onPress={() => approveScreenGoal(kid)}>Keur goed ✓</Btn> : null}
+        </View>
+      </Card>
+    );
+  };
+
   // ----- Home / dashboard (het pronkstuk) -----
   const Feed = () => {
     const openCount = S.chores.filter(c => c.status === "open").length;
@@ -886,6 +997,9 @@ export default function App() {
           ? <Tile icon="⏳" value={waiting.length} label="Te keuren" onPress={() => setTab("klusjes")} hot={waiting.length > 0} />
           : <Tile icon="🔥" value={M.streak} label="Streak" />}
         <Tile icon="🐷" value={fmt(totalSaved)} label="Samen gespaard" onPress={() => setTab("sparen")} />
+        {role === "kind" && (S.homeworkRewardMode === "minutes" || (S.screenBalances[me] || 0) > 0) ? (
+          <Tile icon="⏱️" value={fmtMin(S.screenBalances[me] || 0)} label="Schermtijd" onPress={() => setTab("sparen")} />
+        ) : null}
       </View>
 
       {/* IEDEREEN IN HET GEZIN */}
@@ -1000,6 +1114,35 @@ export default function App() {
     </>
   );
 
+  const showScreenSection = S.homeworkRewardMode === "minutes" || (S.screenBalances[me] || 0) > 0
+    || Object.values(S.screenBalances || {}).some(v => v > 0);
+
+  const ScreenTimer = () => {
+    const bal = S.screenBalances[me] || 0;
+    if (screenTimer) {
+      const mm = String(Math.floor(screenTimer.remaining / 60)).padStart(2, "0");
+      const ss = String(screenTimer.remaining % 60).padStart(2, "0");
+      return (
+        <Card t={t} style={{ marginBottom: 12, alignItems: "center", padding: 24 }}>
+          <Text style={{ fontSize: 40, fontWeight: "900", color: t.accent, letterSpacing: -1 }}>{mm}:{ss}</Text>
+          <Text style={{ fontSize: 13, color: t.sub, marginTop: 6 }}>Schermtijd loopt — veel plezier! 🎮</Text>
+        </Card>
+      );
+    }
+    return (
+      <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>⏱️ Schermtijd gebruiken</Text>
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+          Tegoed: {fmtMin(bal)}. Kies hoeveel minuten je nu gebruikt — dat gaat er meteen af (op is op).</Text>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <TextInput style={[inputStyle(t), { flex: 1, marginBottom: 0 }]} placeholder="Minuten" placeholderTextColor={t.sub}
+            keyboardType="number-pad" value={timerInput} onChangeText={setTimerInput} />
+          <Btn t={t} onPress={() => { const n = parseInt(timerInput, 10); if (n > 0 && n <= bal) { startScreenTimer(n); setTimerInput(""); } else alertX("Kies een geldig aantal minuten", `Je hebt ${fmtMin(bal)} tegoed.`); }}>Start</Btn>
+        </View>
+      </Card>
+    );
+  };
+
   const Sparen = () => (
     <>
       {role === "kind" ? (
@@ -1007,11 +1150,25 @@ export default function App() {
           <GoalCard kid={me} own />
           {S.goals[me] ? (
             <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
-              onPress={() => alertX("Premium ✨", "Tweede spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
+              onPress={() => alertX("Premium ✨", "Tweede geld-spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
               <Text style={{ fontSize: 24 }}>🔒</Text>
-              <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Tweede spaardoel</Text>
-              <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: 1 doel · meer met Premium</Text>
+              <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Tweede geld-spaardoel</Text>
+              <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: 1 geld-doel · meer met Premium</Text>
             </Card>
+          ) : null}
+          {showScreenSection ? (
+            <>
+              <ScreenTimer />
+              <ScreenGoalCard kid={me} own />
+              {S.screenGoals[me] ? (
+                <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
+                  onPress={() => alertX("Premium ✨", "Tweede schermtijd-spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
+                  <Text style={{ fontSize: 24 }}>🔒</Text>
+                  <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Tweede schermtijd-spaardoel</Text>
+                  <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: 1 schermtijd-doel · meer met Premium</Text>
+                </Card>
+              ) : null}
+            </>
           ) : null}
           <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>SPAARDOELEN VAN HET GEZIN</Text>
           {kids.filter(k => k !== me).map(k => <GoalCard key={k} kid={k} />)}
@@ -1020,6 +1177,12 @@ export default function App() {
         <>
           <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>SPAARDOELEN VAN DE KINDEREN</Text>
           {kids.map(k => <GoalCard key={k} kid={k} />)}
+          {showScreenSection ? (
+            <>
+              <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10, marginTop: 6 }}>SCHERMTIJD-SPAARDOELEN</Text>
+              {kids.map(k => <ScreenGoalCard key={k} kid={k} />)}
+            </>
+          ) : null}
         </>
       )}
       <Text style={{ fontSize: 12, color: t.sub, paddingVertical: 12 }}>
@@ -1038,6 +1201,10 @@ export default function App() {
     const m = S.members[h.memberId];
     const mine = h.memberId === me;
     const canToggle = role === "ouder" || mine;
+    // Een item heeft óf cents óf minutes (nooit allebei) — welke van de twee er is
+    // bepaalt alleen het label/icoontje, de rest van de logica is identiek.
+    const reward = h.cents != null ? { amount: fmt(h.cents), icon: "💰" }
+      : h.minutes != null ? { amount: fmtMin(h.minutes), icon: "⏱️" } : null;
     return (
       <Card t={t} style={{ marginBottom: 10 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
@@ -1053,18 +1220,18 @@ export default function App() {
             <Text style={{ fontSize: 12, color: t.sub }}>
               {h.subject ? `${h.subject} · ` : ""}{formatDueDate(h.dueDate)}{role === "ouder" && !mine ? ` · ${m?.name || ""}` : ""}</Text>
           </View>
-          {h.cents ? <Amount t={t} size={16}>{fmt(h.cents)}</Amount> : null}
+          {reward ? <Amount t={t} size={16}>{reward.amount}</Amount> : null}
         </View>
-        {h.cents && h.done && !h.rewardApproved && role === "ouder" ? (
+        {reward && h.done && !h.rewardApproved && role === "ouder" ? (
           <View style={{ marginTop: 10 }}>
             <Btn t={t} small kind="success" onPress={() => approveHomeworkReward(h)}>Goedkeuren ✓</Btn>
           </View>
-        ) : h.cents && h.done && !h.rewardApproved ? (
+        ) : reward && h.done && !h.rewardApproved ? (
           <View style={{ marginTop: 8 }}><Chip t={t} color={t.amber}>⏳ Wacht op goedkeuring</Chip></View>
-        ) : h.cents && !h.done ? (
-          <View style={{ marginTop: 8 }}><Chip t={t} color={t.amber}>💰 Verdien {fmt(h.cents)} zodra het af is</Chip></View>
-        ) : h.cents && h.rewardApproved ? (
-          <View style={{ marginTop: 8 }}><Chip t={t}>✅ {fmt(h.cents)} toegekend</Chip></View>
+        ) : reward && !h.done ? (
+          <View style={{ marginTop: 8 }}><Chip t={t} color={t.amber}>{reward.icon} Verdien {reward.amount} zodra het af is</Chip></View>
+        ) : reward && h.rewardApproved ? (
+          <View style={{ marginTop: 8 }}><Chip t={t}>✅ {reward.amount} toegekend</Chip></View>
         ) : null}
       </Card>
     );
@@ -1093,9 +1260,8 @@ export default function App() {
           </>
         )}
         <Text style={{ fontSize: 12, color: t.sub, paddingVertical: 12 }}>
-          {S.homeworkRewardsEnabled
-            ? "Een ouder kan per taak een beloning instellen — dat zie je hier zodra het is toegevoegd."
-            : "Puur een agenda — zakgeld voor huiswerk kan een ouder aanzetten bij Instellingen."}</Text>
+          Een ouder kan per taak stilletjes een beloning instellen ({S.homeworkRewardMode === "minutes" ? "schermtijd" : "geld"}
+          , via Instellingen om te wisselen) — dat zie je hier pas zodra het is toegevoegd.</Text>
       </>
     );
   };
@@ -1286,20 +1452,36 @@ export default function App() {
       </Card>
 
       <Card t={t} style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>🎓 Zakgeld voor huiswerk</Text>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>📚 Huiswerk voor kinderen</Text>
         <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
-          Staat dit uit, dan is Huiswerk puur een agenda. Zet je 'm aan, dan kun je zelf per taak
-          een beloning instellen — kinderen zien dat pas als jij het invult, en krijgen er zelf
-          geen invoerveld voor.</Text>
+          Zet uit om de hele Huiswerk-tab voor kinderen te verbergen. Jij blijft 'm als ouder gewoon zien.</Text>
         <View style={{ flexDirection: "row", gap: 8 }}>
-          <Btn t={t} small kind={S.homeworkRewardsEnabled ? "primary" : "ghost"} onPress={() => {
-            patch({ homeworkRewardsEnabled: true });
-            if (S.familyId && fam.backendConfigured) push.updateFamily(S.familyId, { homework_rewards_enabled: true });
+          <Btn t={t} small kind={S.homeworkEnabled ? "primary" : "ghost"} onPress={() => {
+            patch({ homeworkEnabled: true });
+            if (S.familyId && fam.backendConfigured) push.updateFamily(S.familyId, { homework_enabled: true });
           }}>Aan</Btn>
-          <Btn t={t} small kind={!S.homeworkRewardsEnabled ? "primary" : "ghost"} onPress={() => {
-            patch({ homeworkRewardsEnabled: false });
-            if (S.familyId && fam.backendConfigured) push.updateFamily(S.familyId, { homework_rewards_enabled: false });
+          <Btn t={t} small kind={!S.homeworkEnabled ? "primary" : "ghost"} onPress={() => {
+            patch({ homeworkEnabled: false });
+            if (S.familyId && fam.backendConfigured) push.updateFamily(S.familyId, { homework_enabled: false });
           }}>Uit</Btn>
+        </View>
+      </Card>
+
+      <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>⏱️ Beloningsvorm voor huiswerk</Text>
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+          Standaard verdienen kinderen schermtijd in minuten met huiswerk. Je kunt dit voor het hele
+          gezin wisselen naar geld — per taak stel jij daarna zelf, stilletjes, een bedrag of aantal
+          minuten in; kinderen krijgen daar zelf geen invoerveld voor.</Text>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Btn t={t} small kind={S.homeworkRewardMode === "minutes" ? "primary" : "ghost"} onPress={() => {
+            patch({ homeworkRewardMode: "minutes" });
+            if (S.familyId && fam.backendConfigured) push.updateFamily(S.familyId, { homework_reward_mode: "minutes" });
+          }}>⏱️ Minuten</Btn>
+          <Btn t={t} small kind={S.homeworkRewardMode === "money" ? "primary" : "ghost"} onPress={() => {
+            patch({ homeworkRewardMode: "money" });
+            if (S.familyId && fam.backendConfigured) push.updateFamily(S.familyId, { homework_reward_mode: "money" });
+          }}>💶 Geld</Btn>
         </View>
       </Card>
 
@@ -1356,11 +1538,13 @@ export default function App() {
     { id: "feed", label: "Home", icon: "🏠", C: Feed },
     { id: "klusjes", label: "Klusjes", icon: "✅", C: Chores },
     { id: "sparen", label: "Sparen", icon: "🐷", C: Sparen },
-    { id: "huiswerk", label: "Huiswerk", icon: "📚", C: Huiswerk },
+    { id: "huiswerk", label: "Huiswerk", icon: "📚", C: Huiswerk,
+      hiddenFor: (r) => r === "kind" && !S.homeworkEnabled },
     { id: "gezin", label: "Gezin", icon: "👨‍👩‍👧‍👦", C: Gezin },
-    { id: "instellingen", label: "Instellingen", icon: "⚙️", C: Instellingen, ouderOnly: true },
+    { id: "instellingen", label: "Instellingen", icon: "⚙️", C: Instellingen,
+      hiddenFor: (r) => r !== "ouder" },
   ];
-  const visibleTabs = tabs.filter(x => !x.ouderOnly || role === "ouder");
+  const visibleTabs = tabs.filter(x => !x.hiddenFor || !x.hiddenFor(role));
   const tabAllowed = (id) => visibleTabs.some(x => x.id === id);
   const Screen = tabAllowed(tab) ? (tabs.find(x => x.id === tab)?.C || Feed) : Feed;
 
@@ -1490,8 +1674,19 @@ export default function App() {
             });
           }
         }} />
+      <AddScreenGoalModal t={t} visible={screenGoalModal} onClose={() => setScreenGoalModal(false)} pickImage={pickImage}
+        onAdd={(goal) => {
+          setS(s => ({ ...s, screenGoals: { ...s.screenGoals, [me]: goal } }));
+          setScreenGoalModal(false);
+          if (S.familyId && fam.backendConfigured) {
+            push.upsertScreenGoal(S.familyId, me, {
+              id: goal.id, name: goal.name, emoji: goal.emoji, image_uri: goal.imageUri,
+              target_minutes: goal.target, saved_minutes: goal.saved, link: goal.link, approved: goal.approved,
+            });
+          }
+        }} />
       <AddHomeworkModal t={t} visible={homeworkModal} onClose={() => setHomeworkModal(false)}
-        role={role} me={me} kids={kids} members={S.members} rewardsEnabled={S.homeworkRewardsEnabled}
+        role={role} me={me} kids={kids} members={S.members} rewardMode={S.homeworkRewardMode}
         onAdd={addHomework} />
       <RejectModal t={t} choreId={rejectFor} onClose={() => setRejectFor(null)} onReject={doReject} />
       <AddKidModal t={t} visible={kidModal} onClose={() => setKidModal(false)} onAdd={addKid} />
@@ -1665,14 +1860,46 @@ function AddGoalModal({ t, visible, onClose, onAdd, pickImage }) {
   );
 }
 
-function AddHomeworkModal({ t, visible, onClose, onAdd, role, me, kids, members, rewardsEnabled }) {
+function AddScreenGoalModal({ t, visible, onClose, onAdd, pickImage }) {
+  const [name, setName] = useState("");
+  const [minutes, setMinutes] = useState("");
+  const [uri, setUri] = useState(null);
+  const submit = () => {
+    const target = parseInt(minutes, 10);
+    if (!name.trim() || !target || target <= 0) { alertX("Vul een naam en een geldig aantal minuten in"); return; }
+    onAdd({ id: uid(), name: name.trim(), emoji: "🎮", imageUri: uri, target, saved: 0, link: "", approved: false });
+    setName(""); setMinutes(""); setUri(null);
+  };
+  return (
+    <Sheet t={t} visible={visible} onClose={onClose} title="🎮 Nieuw schermtijd-spaardoel">
+      <TextInput style={inputStyle(t)} placeholder="Waar spaar je voor? (bijv. een filmavond)" placeholderTextColor={t.sub}
+        value={name} onChangeText={setName} />
+      <TextInput style={inputStyle(t)} placeholder="Doel in minuten (bijv. 120)" placeholderTextColor={t.sub}
+        keyboardType="number-pad" value={minutes} onChangeText={setMinutes} />
+      <View style={{ marginBottom: 10 }}>
+        <Btn t={t} kind="ghost" onPress={async () => { const u = await pickImage(); if (u) setUri(u); }}>
+          {uri ? "🖼️ Foto gekozen ✓ (tik om te wijzigen)" : "🖼️ Kies een foto (optioneel)"}</Btn>
+      </View>
+      <Btn t={t} onPress={submit}>Aanmaken — papa/mama keurt goed</Btn>
+    </Sheet>
+  );
+}
+
+function AddHomeworkModal({ t, visible, onClose, onAdd, role, me, kids, members, rewardMode }) {
   const [title, setTitle] = useState("");
   const [subject, setSubject] = useState("");
   const [day, setDay] = useState("");
   const [month, setMonth] = useState("");
   const [year, setYear] = useState("");
   const [euros, setEuros] = useState("");
+  const [minutes, setMinutes] = useState("");
   const [forKid, setForKid] = useState(role === "ouder" ? (kids[0] || null) : me);
+  // Deze modal blijft gemount zolang de app open is (RN Modal verbergt 'm alleen) — als
+  // er nog geen kinderen waren op het moment van de allereerste render, blijft forKid
+  // anders voorgoed null hangen, ook als er later wél een kind wordt toegevoegd.
+  useEffect(() => {
+    if (role === "ouder" && (!forKid || !kids.includes(forKid))) setForKid(kids[0] || null);
+  }, [kids.join(",")]);
   const submit = () => {
     if (!title.trim()) { alertX("Vul een titel in"); return; }
     const memberId = role === "ouder" ? forKid : me;
@@ -1682,16 +1909,21 @@ function AddHomeworkModal({ t, visible, onClose, onAdd, role, me, kids, members,
     const m = parseInt(month, 10) || (now.getMonth() + 1);
     const d = parseInt(day, 10) || now.getDate();
     const dueDate = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    // Het beloningsveld bestaat hier alleen als er iets ingevuld is EN de invoerder een
-    // ouder is met de schakelaar aan — een kind ziet dit veld nooit, ook niet als de
-    // schakelaar aan staat (zie CLAUDE.md-eis: discreet, door de ouder bepaald).
-    let cents = null;
-    if (role === "ouder" && rewardsEnabled && euros.trim()) {
-      const parsed = Math.round(parseFloat(euros.replace(",", ".")) * 100);
-      if (parsed > 0) cents = parsed;
+    // Het beloningsveld bestaat alleen voor een ouder — een kind dat zijn eigen huiswerk
+    // aanmaakt ziet dit nooit, in geen van beide standen (zie CLAUDE.md-eis: discreet,
+    // door de ouder bepaald — geldt voor minuten net zo goed als voor geld).
+    let cents = null, mins = null;
+    if (role === "ouder") {
+      if (rewardMode === "money" && euros.trim()) {
+        const parsed = Math.round(parseFloat(euros.replace(",", ".")) * 100);
+        if (parsed > 0) cents = parsed;
+      } else if (rewardMode === "minutes" && minutes.trim()) {
+        const parsed = parseInt(minutes, 10);
+        if (parsed > 0) mins = parsed;
+      }
     }
-    onAdd({ id: uid(), memberId, title: title.trim(), subject: subject.trim() || null, dueDate, done: false, cents, rewardApproved: false });
-    setTitle(""); setSubject(""); setDay(""); setMonth(""); setYear(""); setEuros("");
+    onAdd({ id: uid(), memberId, title: title.trim(), subject: subject.trim() || null, dueDate, done: false, cents, minutes: mins, rewardApproved: false });
+    setTitle(""); setSubject(""); setDay(""); setMonth(""); setYear(""); setEuros(""); setMinutes("");
   };
   return (
     <Sheet t={t} visible={visible} onClose={onClose} title="📚 Nieuw huiswerk">
@@ -1720,9 +1952,12 @@ function AddHomeworkModal({ t, visible, onClose, onAdd, role, me, kids, members,
         <TextInput style={[inputStyle(t), { flex: 1 }]} placeholder="Jaar" placeholderTextColor={t.sub}
           keyboardType="number-pad" value={year} onChangeText={setYear} />
       </View>
-      {role === "ouder" && rewardsEnabled ? (
+      {role === "ouder" && rewardMode === "money" ? (
         <TextInput style={inputStyle(t)} placeholder="Beloning (optioneel, bijv. 1,00)" placeholderTextColor={t.sub}
           keyboardType="decimal-pad" value={euros} onChangeText={setEuros} />
+      ) : role === "ouder" && rewardMode === "minutes" ? (
+        <TextInput style={inputStyle(t)} placeholder="Schermtijd in minuten (optioneel, bijv. 20)" placeholderTextColor={t.sub}
+          keyboardType="number-pad" value={minutes} onChangeText={setMinutes} />
       ) : null}
       <Btn t={t} onPress={submit}>Toevoegen</Btn>
     </Sheet>

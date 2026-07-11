@@ -29,7 +29,10 @@ export const DEFAULT_STATE = {
   },
   feed: [],
   homework: [],                    // huiswerk-items, per gezinslid (memberId-veld erin)
-  homeworkRewardsEnabled: false,   // ouder-schakelaar, standaard UIT — zie CLAUDE.md-eis
+  homeworkEnabled: true,           // ouder-schakelaar — uit = hele Huiswerk-tab verborgen voor kinderen
+  homeworkRewardMode: "minutes",   // "minutes" | "money" — gezinsbrede beloningsvorm, standaard minuten
+  screenBalances: { emma: 0, daan: 0, wouter: 0, mama: 0 }, // schermtijd-tegoed in minuten, per lid
+  screenGoals: {},                 // spaardoel in minuten, per kind — los van het geld-spaardoel
   lastMe: null,       // laatst gekozen profiel op dit toestel → automatisch inloggen
   setupDone: false,   // heeft dit toestel de welkom-wizard (echte namen invoeren) al doorlopen?
 
