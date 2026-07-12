@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity, Modal, TextInput, Alert,
   SafeAreaView, useColorScheme, KeyboardAvoidingView, Platform, Linking,
-  Animated, Image, Dimensions, Share,
+  Animated, Image, useWindowDimensions, Share,
 } from "react-native";
 
 const LEGAL_BASE = "https://heitje-voor-een-karweitje-five.vercel.app";
@@ -43,7 +43,6 @@ const SHORTCUT_ITEMS = {
 const APP_VERSION = "0.2.0";
 const BG_LIGHT = require("./assets/bg-light.png");
 const BG_DARK = require("./assets/bg-dark.png");
-const WIN_H = Dimensions.get("window").height;
 
 // react-native-web's eigen Alert.alert() is een complete no-op (geen window.alert/confirm,
 // helemaal niets) — zonder dit zou elke melding en elke bevestiging-voor-verwijderen
@@ -128,6 +127,11 @@ function suggestChoreEmoji(title, room) {
 }
 
 export default function App() {
+  // Reactief i.p.v. één keer bij het laden vastgelegd — op mobiel web verandert de
+  // zichtbare viewporthoogte terwijl je scrolt (de adresbalk klapt in/uit), een
+  // bevroren waarde hier gaf precies de gemelde bug: de achtergrond (en daarmee de
+  // rest van de pagina) schoof/verschoof tijdens het scrollen op een telefoon.
+  const { height: winH } = useWindowDimensions();
   const scheme = useColorScheme();
   const [loaded, setLoaded] = useState(false);
   const [booted, setBooted] = useState(false);
@@ -299,19 +303,27 @@ export default function App() {
     return topics;
   }, []);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [quickShareOpen, setQuickShareOpen] = useState(false);
   const [helpQuery, setHelpQuery] = useState("");
   const filteredHelp = HELP_TOPICS.filter(h =>
     !helpQuery.trim() || (h.title + " " + h.body).toLowerCase().includes(helpQuery.trim().toLowerCase()));
   const closeTour = () => { patch({ tourSeen: true }); setTourForced(false); setTourStep(0); };
 
   // Nieuw kind lokaal toevoegen (en meesynchroniseren als er al een gezin-account is).
+  // Krijgt meteen een standaard spaardoel ("Speelgoed") — zonder dat zou de
+  // sparen/saldo-keuze bij een afgerond klusje maar één echte optie hebben.
   const addKid = (kid) => {
     const key = uid();
-    setS(s => ({ ...s, members: { ...s.members, [key]: kid }, balances: { ...s.balances, [key]: 0 } }));
+    const goal = { id: uid(), name: "Speelgoed", emoji: "🎁", imageUri: null, target: 1500, saved: 0, link: "", approved: true };
+    setS(s => ({ ...s, members: { ...s.members, [key]: kid }, balances: { ...s.balances, [key]: 0 }, goals: { ...s.goals, [key]: goal } }));
     setKidModal(false);
     if (S.familyId && fam.backendConfigured) {
       push.upsertMember(S.familyId, {
         id: key, name: kid.name, avatar: kid.avatar, age: kid.age, role: "kind", color: kid.color,
+      });
+      push.upsertGoal(S.familyId, key, {
+        id: goal.id, name: goal.name, emoji: goal.emoji, image_uri: goal.imageUri,
+        target: goal.target, saved: goal.saved, link: goal.link, approved: goal.approved,
       });
     }
   };
@@ -675,13 +687,24 @@ export default function App() {
   const allocate = (toGoal) => {
     if (!awaitingAllocation) return;
     const { id: choreId, by: kid, cents, title } = awaitingAllocation;
-    if (toGoal && S.goals[kid]) {
-      const g = S.goals[kid], newSaved = g.saved + cents;
+    if (toGoal) {
+      // Vangnet voor kinderen die (bv. van vóór deze wijziging) nog geen spaardoel
+      // hebben — anders zou deze knop niets kunnen doen. Nieuwe kinderen krijgen een
+      // standaard doel al meteen bij het aanmaken (zie addKid/WelcomeWizard).
+      const isNew = !S.goals[kid];
+      const g = S.goals[kid] || { id: uid(), name: "Speelgoed", emoji: "🎁", imageUri: null, target: 1500, saved: 0, link: "", approved: true };
+      const newSaved = g.saved + cents;
       setS(s => ({ ...s, goals: { ...s.goals, [kid]: { ...g, saved: newSaved } }, chores: s.chores.filter(x => x.id !== choreId) }));
+      addFeed({ who: kid, badge: `🐷 ${fmt(cents)} gespaard voor ${g.name}` });
       // Naar een spaardoel: alleen goals.saved bijwerken, geen ledger-entry — die tabel
       // is puur de kasstroom, saldo in een spaardoel is daar bewust los van.
       if (S.familyId && fam.backendConfigured) {
-        if (g.id) push.updateGoal(g.id, { saved: newSaved });
+        if (isNew) {
+          push.upsertGoal(S.familyId, kid, {
+            id: g.id, name: g.name, emoji: g.emoji, image_uri: g.imageUri,
+            target: g.target, saved: newSaved, link: g.link, approved: g.approved,
+          });
+        } else if (g.id) push.updateGoal(g.id, { saved: newSaved });
         push.updateChore(choreId, { allocated: true });
       }
       if (newSaved >= g.target) {
@@ -691,6 +714,7 @@ export default function App() {
       }
     } else {
       setS(s => ({ ...s, balances: { ...s.balances, [kid]: s.balances[kid] + cents }, chores: s.chores.filter(x => x.id !== choreId) }));
+      addFeed({ who: kid, badge: `💶 ${fmt(cents)} gespaard (vrij saldo)` });
       if (S.familyId && fam.backendConfigured) {
         push.addLedgerEntry(S.familyId, { member_id: kid, cents, kind: "chore_reward", chore_id: choreId });
         push.updateChore(choreId, { allocated: true });
@@ -868,11 +892,12 @@ export default function App() {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
         <StatusBar style={isDark ? "light" : "dark"} />
-        <WelcomeWizard t={t} onComplete={(members, balances) => {
+        <WelcomeWizard t={t} onComplete={(members, balances, goals) => {
           // Een echte verse start: ook de demo-klusjes/spaardoelen/feed weg, niet
           // alleen de demo-namen — anders blijft "Vaatwasser uitruimen" van Emma/Daan
-          // gewoon in de pool staan voor een gezin dat nog nooit klusjes had.
-          setS(s => ({ ...s, members, balances, chores: [], goals: {}, feed: [], screenGoals: {},
+          // gewoon in de pool staan voor een gezin dat nog nooit klusjes had. Elk kind
+          // krijgt hier al wel zijn eigen standaard "Speelgoed"-spaardoel mee (goals).
+          setS(s => ({ ...s, members, balances, chores: [], goals: goals || {}, feed: [], screenGoals: {},
             setupDone: true, lastMe: null }));
           setMe(null);
         }} />
@@ -1201,10 +1226,10 @@ export default function App() {
       .sort((a, b) => (a[0] === me ? -1 : b[0] === me ? 1 : 0) || (S.balances[b[0]] - S.balances[a[0]]));
 
     const Tile = ({ icon, value, label, onPress, hot }) => (
-      <Card t={t} onPress={onPress} style={{ flex: 1, paddingVertical: 15, alignItems: "flex-start" }}>
+      <Card t={t} onPress={onPress} style={{ flex: 1, minWidth: 0, paddingVertical: 15, paddingHorizontal: 10, alignItems: "flex-start" }}>
         <Text style={{ fontSize: 19 }}>{icon}</Text>
-        <Text style={{ fontSize: 23, fontWeight: "900", color: hot ? t.accent : t.ink, marginTop: 5, letterSpacing: -0.5 }}>{value}</Text>
-        <Text style={{ fontSize: 11.5, fontWeight: "700", color: t.sub, marginTop: 1 }}>{label}</Text>
+        <Text numberOfLines={1} adjustsFontSizeToFit style={{ fontSize: 23, fontWeight: "900", color: hot ? t.accent : t.ink, marginTop: 5, letterSpacing: -0.5 }}>{value}</Text>
+        <Text numberOfLines={1} style={{ fontSize: 11.5, fontWeight: "700", color: t.sub, marginTop: 1 }}>{label}</Text>
       </Card>
     );
 
@@ -1289,9 +1314,9 @@ export default function App() {
             <View style={{ width: 52, height: 52, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.22)", alignItems: "center", justifyContent: "center" }}>
               <Text style={{ fontSize: 28 }}>{M.avatar}</Text></View>
           )}
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 22, letterSpacing: -0.5 }}>Hoi {M.name}! 👋</Text>
-            <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 12.5, fontWeight: "700" }}>🔥 {M.streak} dagen streak</Text>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={{ color: "#fff", fontWeight: "900", fontSize: 22, letterSpacing: -0.5 }}>Hoi {M.name}! 👋</Text>
+            <Text numberOfLines={1} style={{ color: "rgba(255,255,255,0.85)", fontSize: 12.5, fontWeight: "700" }}>🔥 {M.streak} dagen streak</Text>
           </View>
         </View>
         <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: 16 }}>
@@ -1593,7 +1618,17 @@ export default function App() {
     <>
       {role === "kind" ? (
         <>
+          {/* Verdiend geld en schermtijd eerst, duidelijk bovenaan — de "tweede doel
+              toevoegen"-upsell-kaartjes en de doelen van andere gezinsleden komen
+              bewust pas daaronder. */}
           <GoalCard kid={me} own />
+          {showScreenSection ? (
+            <>
+              <ScreenTimer />
+              <ScreenGoalCard kid={me} own />
+            </>
+          ) : null}
+
           {S.goals[me] ? (
             <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
               onPress={() => alertX("Premium ✨", "Tweede geld-spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
@@ -1602,19 +1637,13 @@ export default function App() {
               <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: 1 geld-doel · meer met Premium</Text>
             </Card>
           ) : null}
-          {showScreenSection ? (
-            <>
-              <ScreenTimer />
-              <ScreenGoalCard kid={me} own />
-              {S.screenGoals[me] ? (
-                <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
-                  onPress={() => alertX("Premium ✨", "Tweede schermtijd-spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
-                  <Text style={{ fontSize: 24 }}>🔒</Text>
-                  <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Tweede schermtijd-spaardoel</Text>
-                  <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: 1 schermtijd-doel · meer met Premium</Text>
-                </Card>
-              ) : null}
-            </>
+          {showScreenSection && S.screenGoals[me] ? (
+            <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
+              onPress={() => alertX("Premium ✨", "Tweede schermtijd-spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
+              <Text style={{ fontSize: 24 }}>🔒</Text>
+              <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Tweede schermtijd-spaardoel</Text>
+              <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: 1 schermtijd-doel · meer met Premium</Text>
+            </Card>
           ) : null}
           <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>SPAARDOELEN VAN HET GEZIN</Text>
           {kids.filter(k => k !== me).map(k => <GoalCard key={k} kid={k} />)}
@@ -1860,9 +1889,9 @@ export default function App() {
               <Text style={{ fontWeight: "800", width: 20, color: i === 0 ? t.amber : t.sub }}>{i + 1}</Text>
               <View style={{ width: 44, height: 44, borderRadius: 999, backgroundColor: t.soft,
                 alignItems: "center", justifyContent: "center" }}><Text style={{ fontSize: 22 }}>{m.avatar}</Text></View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{m.name} {i === 0 && v > 0 ? "👑" : ""}</Text>
-                <Text style={{ fontSize: 12, color: t.sub }}>🔥 {m.streak} dagen streak
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text numberOfLines={1} style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{m.name} {i === 0 && v > 0 ? "👑" : ""}</Text>
+                <Text numberOfLines={1} style={{ fontSize: 12, color: t.sub }}>🔥 {m.streak}
                   {m.role === "kind" ? ` · ${m.age < 12 ? "Junior" : "Tiener"}` : ""}</Text>
               </View>
               <Amount t={t} size={24}>{fmt(v)}</Amount>
@@ -2131,8 +2160,8 @@ export default function App() {
   // voorgrond over achtergrond"-gevoel. Blijft binnen de eigen afbeelding (clamp), dus
   // nooit een lege rand, ook niet bij heel lang scrollen.
   const bgTranslate = scrollY.interpolate({
-    inputRange: [0, WIN_H * 1.5],
-    outputRange: [0, -(WIN_H * 0.5)],
+    inputRange: [0, winH * 1.5],
+    outputRange: [0, -(winH * 0.5)],
     extrapolate: "clamp",
   });
 
@@ -2142,7 +2171,7 @@ export default function App() {
       <Confetti show={confetti} />
 
       <Animated.Image source={isDark ? BG_DARK : BG_LIGHT} resizeMode="cover" pointerEvents="none"
-        style={{ position: "absolute", top: 0, left: 0, right: 0, width: "100%", height: WIN_H * 1.5,
+        style={{ position: "absolute", top: 0, left: 0, right: 0, width: "100%", height: winH * 1.5,
           opacity: isDark ? 0.5 : 0.32, transform: [{ translateY: bgTranslate }] }} />
 
       {/* Header — prominent logo + profielwissel, zelfde afronding als de rest van de balken/kaarten */}
@@ -2155,6 +2184,13 @@ export default function App() {
           <Text numberOfLines={1} style={{ fontSize: 15, fontWeight: "800", color: t.accent, letterSpacing: 0.2, marginTop: -3 }}>
             voor een karweitje</Text>
         </View>
+        {role === "ouder" && fam.backendConfigured && S.familyId ? (
+          <TouchableOpacity onPress={() => setQuickShareOpen(true)} style={{ width: 34, height: 34,
+            borderRadius: 999, backgroundColor: t.soft, borderWidth: 1, borderColor: t.line,
+            alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ fontSize: 15 }}>🔲</Text>
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity onPress={() => setHelpOpen(true)} style={{ width: 34, height: 34,
           borderRadius: 999, backgroundColor: t.soft, borderWidth: 1, borderColor: t.line,
           alignItems: "center", justifyContent: "center" }}>
@@ -2190,13 +2226,16 @@ export default function App() {
         <View style={{ paddingHorizontal: 16, paddingTop: 6 }}><AdSlot t={t} /></View>
       ) : null}
 
-      {/* Tab bar */}
+      {/* Tab bar — ruimere aanraakzone en groter contrast tussen actief/inactief,
+          was te klein/onduidelijk op een echte telefoon. */}
       <View style={{ flexDirection: "row", borderTopWidth: 1, borderColor: t.line, backgroundColor: t.card,
-        paddingTop: 8, paddingBottom: 6 }}>
+        paddingTop: 10, paddingBottom: 10 }}>
         {visibleTabs.map(x => (
-          <TouchableOpacity key={x.id} onPress={() => setTab(x.id)} style={{ flex: 1, alignItems: "center", gap: 2 }}>
-            <Text style={{ fontSize: 19 }}>{x.icon}</Text>
-            <Text style={{ fontSize: 10.5, fontWeight: tab === x.id ? "800" : "600",
+          <TouchableOpacity key={x.id} onPress={() => setTab(x.id)} hitSlop={{ top: 6, bottom: 6 }}
+            style={{ flex: 1, alignItems: "center", gap: 3, paddingVertical: 4, minHeight: 52,
+              backgroundColor: tab === x.id ? t.soft : "transparent", borderRadius: 14, marginHorizontal: 3 }}>
+            <Text style={{ fontSize: 23 }}>{x.icon}</Text>
+            <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: tab === x.id ? "800" : "600",
               color: tab === x.id ? t.accent : t.sub }}>{x.label}</Text>
             {x.id === "klusjes" && role === "ouder" && waiting.length > 0 ? (
               <View style={{ position: "absolute", top: -2, right: "26%", backgroundColor: t.danger,
@@ -2221,11 +2260,9 @@ export default function App() {
             <Text style={{ textAlign: "center", fontSize: jr ? 15 : 13, color: t.sub, marginBottom: 18 }}>
               {jr ? "Waar gaat het heen? 🤔" : `${awaitingAllocation?.title || ""} — waar gaat het heen?`}</Text>
             <View style={{ gap: 10 }}>
-              {S.goals[me] ? (
-                <Btn t={t} jr={jr} onPress={() => allocate(true)}>
-                  🐷 {jr ? "Sparen!" : `Naar mijn spaardoel (${S.goals[me]?.name})`}</Btn>
-              ) : null}
-              <Btn t={t} jr={jr} kind="ghost" onPress={() => allocate(false)}>💸 {jr ? "Zelf houden!" : "Naar vrij saldo"}</Btn>
+              <Btn t={t} jr={jr} onPress={() => allocate(true)}>
+                🎁 {jr ? `Sparen voor ${S.goals[me]?.name || "speelgoed"}!` : `Naar mijn spaardoel (${S.goals[me]?.name || "Speelgoed"})`}</Btn>
+              <Btn t={t} jr={jr} kind="ghost" onPress={() => allocate(false)}>🐷 {jr ? "Gewoon sparen!" : "Algemeen sparen"}</Btn>
             </View>
           </View>
         </View>
@@ -2281,6 +2318,25 @@ export default function App() {
             </View>
           </View>
         ) : null}
+      </Sheet>
+      <Sheet t={t} visible={quickShareOpen} onClose={() => setQuickShareOpen(false)} title="🔲 Snel delen — 2e ouder">
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 14, textAlign: "center" }}>
+          Laat de andere ouder dit scannen of de code intypen bij "Ik heb een code" om mee te doen aan dit gezin.
+          Meer deel-opties (kind delen, gast/host uitnodigen) staan bij Gezin.</Text>
+        {inviteCode ? (
+          <View style={{ alignItems: "center" }}>
+            <View style={{ backgroundColor: "#fff", padding: 12, borderRadius: 12, marginBottom: 10 }}>
+              <QRCode value={`${LEGAL_BASE}/join/${inviteCode}`} size={200} />
+            </View>
+            <Text style={{ fontWeight: "900", fontSize: 22, letterSpacing: 3, color: t.ink, marginBottom: 6 }}>{inviteCode}</Text>
+            <Text style={{ fontSize: 12, color: t.sub, textAlign: "center" }}>Geldig 24 uur.</Text>
+          </View>
+        ) : (
+          <Btn t={t} onPress={async () => {
+            try { setInviteCode(await fam.createInvite(S.familyId)); }
+            catch { alertX("Dat ging niet goed", "Probeer het nog eens."); }
+          }}>Uitnodiging maken voor een 2e ouder</Btn>
+        )}
       </Sheet>
       <Sheet t={t} visible={avatarPickerOpen} onClose={() => setAvatarPickerOpen(false)} title="🦊 Avatar kiezen">
         <Text style={{ fontSize: 12, color: t.sub, marginBottom: 14 }}>
@@ -2997,7 +3053,7 @@ function WelcomeWizard({ t, onComplete }) {
 
   const finish = () => {
     if (!parentName.trim()) { alertX("Vul jouw naam in"); return; }
-    const members = {}; const balances = {};
+    const members = {}; const balances = {}; const goals = {};
     const parentKey = uid();
     members[parentKey] = { name: parentName.trim(), avatar: parentAvatar, age: null, role: "ouder", streak: 0, color: "#7C3AED" };
     balances[parentKey] = 0;
@@ -3005,8 +3061,9 @@ function WelcomeWizard({ t, onComplete }) {
       const key = uid();
       members[key] = { name: k.name, avatar: k.avatar, age: k.age, role: "kind", streak: 0, color: KID_COLORS[i % KID_COLORS.length] };
       balances[key] = 0;
+      goals[key] = { id: uid(), name: "Speelgoed", emoji: "🎁", imageUri: null, target: 1500, saved: 0, link: "", approved: true };
     });
-    onComplete(members, balances);
+    onComplete(members, balances, goals);
   };
 
   if (stage === "welcome") {

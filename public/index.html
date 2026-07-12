@@ -24,10 +24,18 @@
       html,
       body {
         height: 100%;
+        height: 100dvh; /* volgt de écht zichtbare hoogte op mobiel i.p.v. de vaste 100% */
+        overscroll-behavior: none; /* voorkomt dat scroll-bounce "doorlekt" naar de mobiele browser-chrome (adresbalk in/uitklappen) tijdens het scrollen in de app */
       }
-      /* These styles disable body scrolling if you are using <ScrollView> */
+      /* These styles disable body scrolling if you are using <ScrollView> — position:
+         fixed zet de hele app-shell letterlijk vast op het viewport, zodat alleen de
+         eigen <ScrollView>'s binnenin bewegen. Zonder dit verschoof de hele pagina
+         (inclusief bovenbalk en onderste tabbladen) mee met de inklappende adresbalk. */
       body {
         overflow: hidden;
+        position: fixed;
+        inset: 0;
+        width: 100%;
       }
       /* These styles make the root element full-height */
       #root {
