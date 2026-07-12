@@ -38,6 +38,7 @@ export const DEFAULT_STATE = {
   lastMe: null,       // laatst gekozen profiel op dit toestel → automatisch inloggen
   setupDone: false,   // heeft dit toestel de welkom-wizard (echte namen invoeren) al doorlopen?
   pricingSeen: false, // heeft dit toestel de kosten/reclame-uitleg (eerste pagina) al gezien?
+  milestonesSeen: {}, // per kind: welke klusjes-mijlpalen (10/25/50/100) al als badge getoond zijn
 
   // Fase 1 — backend/gezin-koppeling. Blijven allemaal null/false zolang er geen
   // gezin-account is aangemaakt: de app werkt dan gewoon zoals altijd, 100% lokaal.

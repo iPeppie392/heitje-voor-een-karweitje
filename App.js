@@ -59,6 +59,23 @@ function alertX(title, message, buttons) {
   btn?.onPress?.();
 }
 
+// Streak = aantal opeenvolgende dagen (incl. vandaag) met minstens één goedgekeurd
+// klusje. Puur afgeleid uit de feed in plaats van een eigen datumveld bij te houden —
+// scheelt een aparte kolom/migratie, en staat vanzelf in sync met wat al gesynchroniseerd
+// wordt. Telt terug vanaf vandaag, stopt bij de eerste gemiste dag.
+function computeStreak(feed, memberId) {
+  const days = new Set(feed.filter(p => p.who === memberId && !p.badge).map(p => p.time.slice(0, 10)));
+  let streak = 0;
+  const d = new Date();
+  while (days.has(d.toISOString().slice(0, 10))) {
+    streak++;
+    d.setDate(d.getDate() - 1);
+  }
+  return streak;
+}
+
+const CHORE_MILESTONES = [10, 25, 50, 100];
+
 export default function App() {
   const scheme = useColorScheme();
   const [loaded, setLoaded] = useState(false);
@@ -148,6 +165,18 @@ export default function App() {
       if (token && token !== S.members[me]?.push_token) push.updateMember(me, { push_token: token });
     });
   }, [me, S.familyId, fam.backendConfigured]);
+
+  // Streak verversen zodra dit profiel actief wordt — vangt de "dag gemist"-situatie op.
+  // Zonder dit zou een oude streak blijven staan totdat het kind weer een klusje
+  // goedkeurt, wat dan een onterecht hoog getal zou tonen.
+  useEffect(() => {
+    if (!me || S.members[me]?.role !== "kind") return;
+    const newStreak = computeStreak(S.feed, me);
+    if (newStreak !== S.members[me].streak) {
+      setS(s => ({ ...s, members: { ...s.members, [me]: { ...s.members[me], streak: newStreak } } }));
+      if (S.familyId && fam.backendConfigured) push.updateMember(me, { streak: newStreak });
+    }
+  }, [me, S.feed]);
 
   // Profiel kiezen op de inlogpagina — onthoudt de keuze voor de volgende keer
   const pick = (k) => { setMe(k); patch({ lastMe: k }); };
@@ -359,6 +388,18 @@ export default function App() {
     }
   };
 
+  // Vuurt eenmalig een feed-badge af zodra een kind een klusjes-mijlpaal (10/25/50/100)
+  // haalt — hergebruikt het bestaande badge-feedbericht-patroon (zie SPAARDOEL BEREIKT
+  // hieronder). doneCount wordt door de aanroeper meegegeven omdat S.feed op dat moment
+  // de zojuist toegevoegde klus nog niet bevat (setS is niet synchroon).
+  const checkChoreMilestones = (kidId, doneCount) => {
+    const seen = S.milestonesSeen[kidId] || [];
+    const hit = CHORE_MILESTONES.find(n => doneCount >= n && !seen.includes(n));
+    if (!hit) return;
+    addFeed({ who: kidId, badge: `🏆 ${hit} klusjes gedaan!` });
+    setS(s => ({ ...s, milestonesSeen: { ...s.milestonesSeen, [kidId]: [...(s.milestonesSeen[kidId] || []), hit] } }));
+  };
+
   const react = (id, e) => {
     const post = S.feed.find(p => p.id === id);
     if (!post) return;
@@ -435,6 +476,15 @@ export default function App() {
         sendPushNotification(kid.push_token, "Goedgekeurd! 🎉",
           `"${c.title}" is goedgekeurd — kies sparen of saldo.`, { choreId: c.id });
       }
+      // Streak/mijlpalen bijwerken alsof de zojuist toegevoegde feed-post er al in zit
+      // (addFeed hierboven is nog niet doorgekomen in deze S — setS is niet synchroon).
+      const newStreak = computeStreak([{ time: new Date().toISOString(), who: c.by }, ...S.feed], c.by);
+      if (newStreak !== kid?.streak) {
+        setS(s => ({ ...s, members: { ...s.members, [c.by]: { ...s.members[c.by], streak: newStreak } } }));
+        if (S.familyId && fam.backendConfigured) push.updateMember(c.by, { streak: newStreak });
+      }
+      const doneCount = S.feed.filter(p => p.who === c.by && !p.badge).length + 1;
+      checkChoreMilestones(c.by, doneCount);
     } else {
       // Ouders verdienen normaal geen zakgeld (UI blokkeert dit al) — dit pad is
       // defensief, geen keuze-moment nodig, dus meteen als "allocated" afronden.

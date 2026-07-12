@@ -26,7 +26,9 @@
       "package": "nl.heitje.karweitje",
       "versionCode": 3,
       "permissions": [
-        "CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -65,6 +67,12 @@
           "iosAppId": "ca-app-pub-3747360356393074~2683320880"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "50c3c1be-d795-42f9-a966-a3292d639841"
+      }
+    },
+    "owner": "ipeppie"
   }
 }
