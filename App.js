@@ -76,6 +76,32 @@ function computeStreak(feed, memberId) {
 
 const CHORE_MILESTONES = [10, 25, 50, 100];
 
+const PAYOUT_DAYS = [
+  { v: 1, l: "Ma" }, { v: 2, l: "Di" }, { v: 3, l: "Wo" }, { v: 4, l: "Do" },
+  { v: 5, l: "Vr" }, { v: 6, l: "Za" }, { v: 0, l: "Zo" },
+];
+
+// Kamer/titel-trefwoorden → passend emoji, zodat een nieuw klusje niet standaard
+// dezelfde spons krijgt. Simpele keyword-match, geen aparte picker-UI nodig.
+const CHORE_EMOJI_RULES = [
+  { match: /keuken|afwas|vaatwasser|koken/i, emoji: "🍽️" },
+  { match: /badkamer|douche|wc|toilet/i, emoji: "🛁" },
+  { match: /slaapkamer|bed/i, emoji: "🛏️" },
+  { match: /tuin|planten|gras/i, emoji: "🌳" },
+  { match: /hond|kat|dier|huisdier/i, emoji: "🐾" },
+  { match: /was(machine)?|strijk/i, emoji: "🧺" },
+  { match: /vuilnis|afval|prullenbak/i, emoji: "🗑️" },
+  { match: /boodschap/i, emoji: "🛒" },
+  { match: /raam|ramen/i, emoji: "🪟" },
+  { match: /auto/i, emoji: "🚗" },
+  { match: /woonkamer|stof|zuig|dweil/i, emoji: "🧹" },
+];
+function suggestChoreEmoji(title, room) {
+  const text = `${title} ${room}`;
+  for (const rule of CHORE_EMOJI_RULES) if (rule.match.test(text)) return rule.emoji;
+  return "🧽";
+}
+
 export default function App() {
   const scheme = useColorScheme();
   const [loaded, setLoaded] = useState(false);
@@ -1012,6 +1038,9 @@ export default function App() {
     const kidBalances = Object.entries(S.balances).filter(([k]) => S.members[k]?.role === "kind");
     const topSaverKey = kidBalances.sort((a, b) => b[1] - a[1])[0]?.[0];
     const familyBalance = kidBalances.reduce((sum, [, v]) => sum + v, 0);
+    // Vast wekelijks uitbetaal-moment (BusyKid-achtig "payday"-ritueel) — puur een
+    // herinnering, geen automatische transactie: de app rekent nooit zelf geld uit.
+    const isPayoutDay = role === "ouder" && familyBalance > 0 && new Date().getDay() === (S.payoutDay ?? 5);
     // "approved" is geen weergavestatus (dat is de keuze-modal hierboven) — anders
     // blijft een kaartje hier hangen zonder passende statustekst zolang het kind nog
     // niet gekozen heeft waar het bedrag heen gaat.
@@ -1128,6 +1157,18 @@ export default function App() {
             : waiting.length ? `${waiting.length} ${waiting.length === 1 ? "klus wacht" : "klussen wachten"} op jouw goedkeuring.`
                              : "Alles is goedgekeurd. Top! ✨"}</Text>
       </Card>
+
+      {isPayoutDay ? (
+        <Card t={t} onPress={() => setTab("gezin")} style={{ marginBottom: 14, borderWidth: 2, borderColor: t.amber }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Text style={{ fontSize: 22 }}>🎉</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: "800", fontSize: 14, color: t.ink }}>Het is uitbetaaldag!</Text>
+              <Text style={{ fontSize: 12, color: t.sub }}>Tijd om het zakgeld van deze week uit te betalen.</Text>
+            </View>
+          </View>
+        </Card>
+      ) : null}
 
       {/* SNELKOPPELINGEN */}
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -1685,6 +1726,17 @@ export default function App() {
       </Card>
 
       <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>📅 Uitbetaaldag</Text>
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+          Op deze dag krijg je op Home een herinnering als er nog zakgeld klaarstaat om uit te betalen.</Text>
+        <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+          {PAYOUT_DAYS.map(d => (
+            <Btn key={d.v} t={t} small kind={(S.payoutDay ?? 5) === d.v ? "primary" : "ghost"} onPress={() => patch({ payoutDay: d.v })}>{d.l}</Btn>
+          ))}
+        </View>
+      </Card>
+
+      <Card t={t} style={{ marginBottom: 12 }}>
         <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>📚 Huiswerk voor kinderen</Text>
         <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
           Zet uit om de hele Huiswerk-tab voor kinderen te verbergen. Jij blijft 'm als ouder gewoon zien.</Text>
@@ -2111,7 +2163,7 @@ function GastView({ t, M, fmt, myOffers, onSubmit }) {
   const submit = () => {
     const cents = Math.round(parseFloat(euros.replace(",", ".")) * 100);
     if (!title.trim() || !cents || cents <= 0) { alertX("Vul een titel en een geldig bedrag in"); return; }
-    onSubmit({ title: title.trim(), room: room.trim() || null, emoji: "🎁", cents, note: note.trim() || null });
+    onSubmit({ title: title.trim(), room: room.trim() || null, emoji: suggestChoreEmoji(title, room), cents, note: note.trim() || null });
     setTitle(""); setRoom(""); setEuros(""); setNote("");
     alertX("Verstuurd! ✅", "Een ouder keurt je voorstel eerst goed voordat het een echt klusje wordt.");
   };
@@ -2169,7 +2221,8 @@ function AddChoreModal({ t, visible, onClose, onAdd }) {
     const conditions = (note.trim() || checklist.length || photoReq || deadline.trim())
       ? { note: note.trim(), checklist, photoRequired: photoReq, deadline: deadline.trim() }
       : null;
-    onAdd({ id: uid(), title: title.trim(), room: room.trim() || "Huis", emoji: "🧽", cents, status: "open", by: null, conditions });
+    const roomTrimmed = room.trim() || "Huis";
+    onAdd({ id: uid(), title: title.trim(), room: roomTrimmed, emoji: suggestChoreEmoji(title, roomTrimmed), cents, status: "open", by: null, conditions });
     setTitle(""); setRoom(""); setEuros(""); setNote(""); setChecklistText(""); setDeadline(""); setPhotoReq(false);
   };
   return (
