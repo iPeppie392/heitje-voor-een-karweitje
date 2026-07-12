@@ -5,10 +5,17 @@ import * as Haptics from "expo-haptics";
 import { createAudioPlayer } from "expo-audio";
 import { jrWord } from "./theme";
 
-// Eén gedeelde geluidsspeler voor alle knoppen in de app (niet per knop opnieuw aanmaken —
-// dat zou tientallen native speler-instanties tegelijk geven op een druk scherm).
-let tapPlayer = null;
-try { tapPlayer = createAudioPlayer(require("../assets/sounds/tap.wav")); } catch { tapPlayer = null; }
+// Gedeelde geluidsspelers voor alle knoppen in de app (niet per knop opnieuw aanmaken —
+// dat zou tientallen native speler-instanties tegelijk geven op een druk scherm). Drie
+// lichte varianten i.p.v. steeds exact hetzelfde tikje, per druk willekeurig gekozen.
+let tapPlayers = [];
+try {
+  tapPlayers = [
+    createAudioPlayer(require("../assets/sounds/tap.wav")),
+    createAudioPlayer(require("../assets/sounds/tap2.wav")),
+    createAudioPlayer(require("../assets/sounds/tap3.wav")),
+  ];
+} catch { tapPlayers = []; }
 
 // AdSlot zit in een eigen bestand met een .web.js-variant: Metro's webbundelaar kan
 // react-native-google-mobile-ads niet bundelen (gebruikt React Native-interne modules
@@ -48,7 +55,10 @@ export const Btn = ({ t, children, onPress, kind = "primary", small, jr }) => {
   };
   const handlePress = () => {
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-    try { tapPlayer?.seekTo?.(0); tapPlayer?.play?.(); } catch {}
+    try {
+      const p = tapPlayers[Math.floor(Math.random() * tapPlayers.length)];
+      p?.seekTo?.(0); p?.play?.();
+    } catch {}
     onPress?.();
   };
 

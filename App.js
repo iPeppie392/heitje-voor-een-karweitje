@@ -76,6 +76,23 @@ function computeStreak(feed, memberId) {
 
 const CHORE_MILESTONES = [10, 25, 50, 100];
 
+// Bonus-avatars die vrijkomen bij een klusjes-mijlpaal — bovenop de altijd-beschikbare
+// KID_AVATARS-lijst (verderop in dit bestand). Dieren blijven neutraal genoeg voor zowel
+// een jong kind als een tiener van 17, dus geen "kinderachtige" stijlbreuk.
+const BONUS_AVATARS = { 10: "🐲", 25: "🦉", 50: "🦋", 100: "🐬" };
+
+// Heitje's mascotte: bewust géén nieuw illustratie-personage, gewoon de vos-emoji die al
+// in de merknaam/avatars zit, en bewust ALLEEN voor junior kinderen (<12) — de app bedient
+// ook tieners tot 17, en een opdringerig mascottekaartje zou voor hen als kinderachtig
+// aanvoelen. Voor teens en ouders verschijnt dit kaartje daarom helemaal niet.
+const MASCOT_TIPS = [
+  "Elke dag een klusje maakt je streak sterker! 🔥",
+  "Spaardoel bijna bereikt? Ga zo door! 🐷",
+  "Een klusje goed afmaken voelt best trots. 💪",
+  "Heitje de vos duimt voor je vandaag! 🤞",
+  "Streak vasthouden: elke dag telt, ook een klein klusje!",
+];
+
 const PAYOUT_DAYS = [
   { v: 1, l: "Ma" }, { v: 2, l: "Di" }, { v: 3, l: "Wo" }, { v: 4, l: "Do" },
   { v: 5, l: "Vr" }, { v: 6, l: "Za" }, { v: 0, l: "Zo" },
@@ -123,6 +140,7 @@ export default function App() {
   const [guestInviteCode, setGuestInviteCode] = useState(null);
   const [kidModal, setKidModal] = useState(false);
   const [qrKid, setQrKid] = useState(null); // key van kind waarvan de deel-QR getoond wordt
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [parentModal, setParentModal] = useState(false);
   const [promoInput, setPromoInput] = useState("");
   const [giftModal, setGiftModal] = useState(false);
@@ -300,6 +318,14 @@ export default function App() {
         id: key, name: parent.name, avatar: parent.avatar, age: parent.age, role: "ouder", color: parent.color,
       });
     }
+  };
+
+  // Een kind mag zelf zijn eigen avatar wijzigen — basis-set altijd beschikbaar, plus
+  // bonus-avatars die vrijkomen via klusjes-mijlpalen (zie BONUS_AVATARS/milestonesSeen).
+  const changeAvatar = (newAvatar) => {
+    setS(s => ({ ...s, members: { ...s.members, [me]: { ...s.members[me], avatar: newAvatar } } }));
+    if (S.familyId && fam.backendConfigured) push.updateMember(me, { avatar: newAvatar });
+    setAvatarPickerOpen(false);
   };
 
   // Gezinslid verwijderen — met bevestiging, en een vangnet zodat er altijd
@@ -1041,6 +1067,7 @@ export default function App() {
     // Vast wekelijks uitbetaal-moment (BusyKid-achtig "payday"-ritueel) — puur een
     // herinnering, geen automatische transactie: de app rekent nooit zelf geld uit.
     const isPayoutDay = role === "ouder" && familyBalance > 0 && new Date().getDay() === (S.payoutDay ?? 5);
+    const mascotTip = MASCOT_TIPS[new Date().getDate() % MASCOT_TIPS.length];
     // "approved" is geen weergavestatus (dat is de keuze-modal hierboven) — anders
     // blijft een kaartje hier hangen zonder passende statustekst zolang het kind nog
     // niet gekozen heeft waar het bedrag heen gaat.
@@ -1129,8 +1156,14 @@ export default function App() {
       {/* HERO — saldo + begroeting */}
       <Card t={t} style={{ marginBottom: 14, backgroundColor: t.accent, borderColor: t.accent, padding: 20 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          <View style={{ width: 52, height: 52, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.22)", alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ fontSize: 28 }}>{M.avatar}</Text></View>
+          {role === "kind" ? (
+            <TouchableOpacity onPress={() => setAvatarPickerOpen(true)}
+              style={{ width: 52, height: 52, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.22)", alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ fontSize: 28 }}>{M.avatar}</Text></TouchableOpacity>
+          ) : (
+            <View style={{ width: 52, height: 52, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.22)", alignItems: "center", justifyContent: "center" }}>
+              <Text style={{ fontSize: 28 }}>{M.avatar}</Text></View>
+          )}
           <View style={{ flex: 1 }}>
             <Text style={{ color: "#fff", fontWeight: "900", fontSize: 22, letterSpacing: -0.5 }}>Hoi {M.name}! 👋</Text>
             <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 12.5, fontWeight: "700" }}>🔥 {M.streak} dagen streak</Text>
@@ -1167,6 +1200,13 @@ export default function App() {
               <Text style={{ fontSize: 12, color: t.sub }}>Tijd om het zakgeld van deze week uit te betalen.</Text>
             </View>
           </View>
+        </Card>
+      ) : null}
+
+      {jr ? (
+        <Card t={t} style={{ marginBottom: 14, flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <Text style={{ fontSize: 26 }}>🦊</Text>
+          <Text style={{ flex: 1, fontSize: 13, color: t.ink, fontWeight: "600" }}>{mascotTip}</Text>
         </Card>
       ) : null}
 
@@ -1987,6 +2027,21 @@ export default function App() {
             </View>
           </View>
         ) : null}
+      </Sheet>
+      <Sheet t={t} visible={avatarPickerOpen} onClose={() => setAvatarPickerOpen(false)} title="🦊 Avatar kiezen">
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 14 }}>
+          Extra avatars komen vrij bij een klusjes-mijlpaal (10, 25, 50, 100 klusjes).</Text>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+          {[...KID_AVATARS, ...Object.entries(BONUS_AVATARS)
+            .filter(([n]) => (S.milestonesSeen[me] || []).includes(Number(n)))
+            .map(([, a]) => a)].map((a, i) => (
+            <TouchableOpacity key={i} onPress={() => changeAvatar(a)} style={{ width: 52, height: 52, borderRadius: 999,
+              alignItems: "center", justifyContent: "center", backgroundColor: t.soft,
+              borderWidth: M?.avatar === a ? 2 : 0, borderColor: t.accent }}>
+              <Text style={{ fontSize: 24 }}>{a}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </Sheet>
       <Sheet t={t} visible={shortcutsSheet} onClose={() => setShortcutsSheet(false)} title="✏️ Snelkoppelingen aanpassen">
         <Text style={{ fontSize: 12, color: t.sub, marginBottom: 14 }}>
