@@ -55,12 +55,14 @@ export function useFamily({ familyId, onCloudState }) {
     return data[0]; // { family_id, member_id }
   }, []);
 
-  const createInvite = useCallback(async (familyId, role = "ouder") => {
+  // childId: alleen relevant bij role="host" — bindt de uitnodiging aan één specifiek
+  // kind, zodat de host na het inwisselen alleen dat kind mag zien/voor werken.
+  const createInvite = useCallback(async (familyId, role = "ouder", childId = null) => {
     const code = randomCode();
     const { data: memberRow } = await supabase.from("members")
       .select("id").eq("family_id", familyId).eq("auth_user_id", session?.user?.id).single();
     const { error } = await supabase.from("family_invites").insert({
-      family_id: familyId, code, created_by: memberRow?.id, role,
+      family_id: familyId, code, created_by: memberRow?.id, role, child_member_id: childId,
     });
     if (error) throw error;
     return code;

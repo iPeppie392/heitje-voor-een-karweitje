@@ -34,6 +34,7 @@ export const DEFAULT_STATE = {
   screenBalances: { emma: 0, daan: 0, wouter: 0, mama: 0 }, // schermtijd-tegoed in minuten, per lid
   screenGoals: {},                 // spaardoel in minuten, per kind — los van het geld-spaardoel
   choreOffers: [],                 // klusjes voorgesteld door gasten (opa/oma/etc.), wacht op ouder-goedkeuring
+  neighborJobs: [],                 // buurtklusjes: een kind werkt voor iemand buiten het gezin (host-rol)
   hiddenShortcuts: ["sparen", "gezin"], // welke Home-snelkoppelingen dit toestel verborgen heeft (ze staan al onderin de tabbalk)
   lastMe: null,       // laatst gekozen profiel op dit toestel → automatisch inloggen
   setupDone: false,   // heeft dit toestel de welkom-wizard (echte namen invoeren) al doorlopen?

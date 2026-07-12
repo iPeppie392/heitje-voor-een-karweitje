@@ -4,7 +4,7 @@ import { supabase } from "./supabase";
 const QUEUE_KEY = "heitje-pending-writes-v1";
 
 // ---- Vertaling: Supabase-rijen -> dezelfde vorm die App.js al gebruikt ----
-export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkItems, screenGoals, choreOffers, balances, family }) {
+export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkItems, screenGoals, choreOffers, neighborJobs, balances, family }) {
   // Verwijderde gezinsleden worden nooit hard gewist (dat zou hun hele zakgeld-
   // geschiedenis meeslepen via de foreign keys) — alleen gemarkeerd als "archived".
   // Die horen hier nergens meer in de lokale state te verschijnen.
@@ -16,6 +16,7 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkIt
     membersById[m.id] = {
       name: m.name, avatar: m.avatar, age: m.age, role: m.role,
       streak: m.streak, color: m.color, push_token: m.push_token ?? null,
+      hostChildId: m.host_child_id ?? null, externalEarnedCents: m.external_earned_cents || 0,
     };
     screenBalancesById[m.id] = m.screentime_minutes || 0;
   }
@@ -42,6 +43,14 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkIt
   const choreOffersOut = (choreOffers || []).map((o) => ({
     id: o.id, offeredBy: o.offered_by, title: o.title, room: o.room, emoji: o.emoji,
     cents: o.cents, note: o.note, status: o.status,
+  }));
+
+  // Buurtklusjes: net als chore_offers hierboven kaal doorgeven — RLS regelt al dat een
+  // host alleen zijn eigen jobs terugkrijgt, een ouder/kind ziet ze allemaal.
+  const neighborJobsOut = (neighborJobs || []).map((j) => ({
+    id: j.id, childId: j.child_id, hostId: j.host_id, title: j.title, cents: j.cents, status: j.status,
+    checkInUri: j.check_in_uri, checkInAt: j.check_in_at, checkOutUri: j.check_out_uri, checkOutAt: j.check_out_at,
+    hostApprovedAt: j.host_approved_at, parentApprovedAt: j.parent_approved_at,
   }));
 
   const goalsById = {};
@@ -77,14 +86,14 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkIt
   return {
     members: membersById, balances: balancesById, chores: choresOut, goals: goalsById, feed: feedOut,
     homework: homeworkOut, screenBalances: screenBalancesById, screenGoals: screenGoalsById,
-    choreOffers: choreOffersOut,
+    choreOffers: choreOffersOut, neighborJobs: neighborJobsOut,
     cur: family?.currency, premiumUnlocked: !!family?.premium_unlocked,
     homeworkEnabled: family?.homework_enabled !== false, homeworkRewardMode: family?.homework_reward_mode || "minutes",
   };
 }
 
 export async function pullFamilyState(familyId) {
-  const [members, chores, goals, feedPosts, homeworkItems, screenGoals, choreOffers, balances, family] = await Promise.all([
+  const [members, chores, goals, feedPosts, homeworkItems, screenGoals, choreOffers, neighborJobs, balances, family] = await Promise.all([
     supabase.from("members").select("*").eq("family_id", familyId),
     supabase.from("chores").select("*").eq("family_id", familyId),
     supabase.from("goals").select("*").eq("family_id", familyId),
@@ -92,18 +101,20 @@ export async function pullFamilyState(familyId) {
     supabase.from("homework_items").select("*").eq("family_id", familyId),
     supabase.from("screentime_goals").select("*").eq("family_id", familyId),
     supabase.from("chore_offers").select("*").eq("family_id", familyId),
+    supabase.from("neighbor_jobs").select("*").eq("family_id", familyId),
     supabase.from("member_balances").select("*").eq("family_id", familyId),
     supabase.from("families").select("*").eq("id", familyId).single(),
   ]);
   for (const r of [members, chores, goals, feedPosts, balances, family]) if (r.error) throw r.error;
-  // homework_items/screentime_goals/chore_offers bestaan pas zodra sql/005/006/007
-  // gedraaid zijn — tot die migraties gedraaid zijn, mag een ontbrekende tabel de rest
-  // van de sync niet breken.
+  // homework_items/screentime_goals/chore_offers/neighbor_jobs bestaan pas zodra
+  // sql/005/006/007/008 gedraaid zijn — tot die migraties gedraaid zijn, mag een
+  // ontbrekende tabel de rest van de sync niet breken.
   return rowsToLocalShape({
     members: members.data, chores: chores.data, goals: goals.data,
     feedPosts: feedPosts.data, homeworkItems: homeworkItems.error ? [] : homeworkItems.data,
     screenGoals: screenGoals.error ? [] : screenGoals.data,
     choreOffers: choreOffers.error ? [] : choreOffers.data,
+    neighborJobs: neighborJobs.error ? [] : neighborJobs.data,
     balances: balances.data, family: family.data,
   });
 }
@@ -119,6 +130,7 @@ export function subscribeFamilyRealtime(familyId, onChange) {
     .on("postgres_changes", { event: "*", schema: "public", table: "homework_items", filter: `family_id=eq.${familyId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "screentime_goals", filter: `family_id=eq.${familyId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "chore_offers", filter: `family_id=eq.${familyId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "neighbor_jobs", filter: `family_id=eq.${familyId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "families", filter: `id=eq.${familyId}` }, onChange)
     .subscribe();
   return () => supabase.removeChannel(channel);
@@ -175,6 +187,12 @@ export const push = {
   adjustScreentime: (memberId, delta) => runRpc("adjust_screentime", { p_member_id: memberId, p_delta: delta }),
   upsertChoreOffer: (familyId, offer) => run("chore_offers", "insert", { family_id: familyId, ...offer }),
   decideChoreOffer: (offerId, decision) => runRpc("approve_chore_offer", { p_offer_id: offerId, p_decision: decision }),
+  createNeighborJob: (familyId, job) => run("neighbor_jobs", "insert", { family_id: familyId, ...job }),
+  checkinNeighborJob: (jobId, photoUri) => runRpc("checkin_neighbor_job", { p_job_id: jobId, p_photo_uri: photoUri }),
+  checkoutNeighborJob: (jobId, photoUri) => runRpc("checkout_neighbor_job", { p_job_id: jobId, p_photo_uri: photoUri }),
+  hostApproveNeighborJob: (jobId, decision) => runRpc("host_approve_neighbor_job", { p_job_id: jobId, p_decision: decision }),
+  parentApproveNeighborJob: (jobId, decision) => runRpc("parent_approve_neighbor_job", { p_job_id: jobId, p_decision: decision }),
+  mergeExternalEarnings: (childId) => runRpc("merge_external_earnings", { p_child_id: childId }),
 };
 
 export async function flushPendingWrites() {

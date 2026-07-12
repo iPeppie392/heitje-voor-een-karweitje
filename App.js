@@ -93,6 +93,14 @@ const MASCOT_TIPS = [
   "Streak vasthouden: elke dag telt, ook een klein klusje!",
 ];
 
+const NEIGHBOR_JOB_STATUS_LABEL = {
+  open: "⏳ Nog niet gestart",
+  in_progress: "🚶 Bezig",
+  awaiting_approval: "📋 Wacht op goedkeuring",
+  approved: "🎉 Goedgekeurd!",
+  declined: "❌ Afgewezen",
+};
+
 const PAYOUT_DAYS = [
   { v: 1, l: "Ma" }, { v: 2, l: "Di" }, { v: 3, l: "Wo" }, { v: 4, l: "Do" },
   { v: 5, l: "Vr" }, { v: 6, l: "Za" }, { v: 0, l: "Zo" },
@@ -138,6 +146,7 @@ export default function App() {
   const [familySetupOpen, setFamilySetupOpen] = useState(false);
   const [inviteCode, setInviteCode] = useState(null);
   const [guestInviteCode, setGuestInviteCode] = useState(null);
+  const [hostInviteCode, setHostInviteCode] = useState(null);
   const [kidModal, setKidModal] = useState(false);
   const [qrKid, setQrKid] = useState(null); // key van kind waarvan de deel-QR getoond wordt
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
@@ -389,6 +398,106 @@ export default function App() {
           decision === "approved" ? `"${offer.title}" staat nu in de klusjespool.` : `"${offer.title}" is deze keer niet doorgegaan.`);
       }
     }
+  };
+
+  // Buurtklusjes: een kind werkt voor iemand buiten het gezin (host-rol, uitgenodigd
+  // door een ouder voor precies dat ene kind). Dubbele goedkeuring (host + ouder) en de
+  // uiteindelijke credit naar de "extern verdiend"-pot gebeuren atomair server-side (zie
+  // sql/008_neighbor_jobs.sql) — hier alleen optimistisch de eigen velden bijwerken en
+  // vertrouwen op de eerstvolgende realtime-pull voor de definitieve status, zelfde
+  // patroon als decideChoreOffer hierboven (nooit lokaal de serverlogica nadoen).
+  const submitNeighborJob = ({ title, cents }) => {
+    const childId = S.members[me]?.hostChildId;
+    if (!childId) return;
+    const id = uid();
+    const job = { id, childId, hostId: me, title, cents, status: "open" };
+    setS(s => ({ ...s, neighborJobs: [...s.neighborJobs, job] }));
+    if (S.familyId && fam.backendConfigured) {
+      push.createNeighborJob(S.familyId, { id, child_id: childId, host_id: me, title, cents });
+      for (const parent of Object.values(S.members).filter(m => m.role === "ouder")) {
+        if (parent.push_token) sendPushNotification(parent.push_token, "Nieuw buurtklusje",
+          `${M?.name || "Iemand"} biedt ${S.members[childId]?.name || "een kind"} een klusje aan: ${title}`);
+      }
+    }
+  };
+
+  const checkinNeighborJob = async (jobId) => {
+    const uri = await takePhoto();
+    if (!uri) return;
+    setS(s => ({ ...s, neighborJobs: s.neighborJobs.map(j => j.id === jobId
+      ? { ...j, status: "in_progress", checkInUri: uri, checkInAt: new Date().toISOString() } : j) }));
+    if (S.familyId && fam.backendConfigured) push.checkinNeighborJob(jobId, uri);
+  };
+
+  const checkoutNeighborJob = async (jobId) => {
+    const uri = await takePhoto();
+    if (!uri) return;
+    const job = S.neighborJobs.find(j => j.id === jobId);
+    setS(s => ({ ...s, neighborJobs: s.neighborJobs.map(j => j.id === jobId
+      ? { ...j, status: "awaiting_approval", checkOutUri: uri, checkOutAt: new Date().toISOString() } : j) }));
+    if (S.familyId && fam.backendConfigured) {
+      push.checkoutNeighborJob(jobId, uri);
+      const host = job ? S.members[job.hostId] : null;
+      if (host?.push_token) sendPushNotification(host.push_token, "Klusje uitgecheckt", `"${job.title}" is klaar gemeld — keur 'm goed.`);
+      for (const parent of Object.values(S.members).filter(m => m.role === "ouder")) {
+        if (parent.push_token) sendPushNotification(parent.push_token, "Buurtklusje wacht op jouw goedkeuring", `"${job?.title}" is klaar gemeld.`);
+      }
+    }
+  };
+
+  // De "goedgekeurd!"-melding aan het kind mag pas als dit ECHT de tweede/laatste
+  // goedkeuring is (de ander had al goedgekeurd) — anders zou het kind bij een eenzijdige
+  // goedkeuring al te vroeg denken dat het bedrag binnen is.
+  const decideNeighborJobAsHost = (jobId, decision) => {
+    const job = S.neighborJobs.find(j => j.id === jobId);
+    setS(s => ({ ...s, neighborJobs: s.neighborJobs.map(j => j.id === jobId
+      ? { ...j, status: decision === "declined" ? "declined" : j.status,
+          hostApprovedAt: decision === "approved" ? new Date().toISOString() : j.hostApprovedAt }
+      : j) }));
+    if (S.familyId && fam.backendConfigured) {
+      push.hostApproveNeighborJob(jobId, decision);
+      const kid = job ? S.members[job.childId] : null;
+      if (decision === "declined") {
+        for (const parent of Object.values(S.members).filter(m => m.role === "ouder")) {
+          if (parent.push_token) sendPushNotification(parent.push_token, "Buurtklusje afgewezen", `De host heeft "${job?.title}" niet goedgekeurd.`);
+        }
+      } else if (job?.parentApprovedAt && kid?.push_token) {
+        sendPushNotification(kid.push_token, "Buurtklusje goedgekeurd! 🎉", `"${job.title}" is goedgekeurd — het bedrag staat klaar.`);
+      }
+    }
+  };
+
+  const decideNeighborJobAsParent = (jobId, decision) => {
+    const job = S.neighborJobs.find(j => j.id === jobId);
+    setS(s => ({ ...s, neighborJobs: s.neighborJobs.map(j => j.id === jobId
+      ? { ...j, status: decision === "declined" ? "declined" : j.status,
+          parentApprovedAt: decision === "approved" ? new Date().toISOString() : j.parentApprovedAt }
+      : j) }));
+    if (S.familyId && fam.backendConfigured) {
+      push.parentApproveNeighborJob(jobId, decision);
+      const kid = job ? S.members[job.childId] : null;
+      const host = job ? S.members[job.hostId] : null;
+      if (decision === "declined") {
+        if (host?.push_token) sendPushNotification(host.push_token, "Buurtklusje afgewezen", `Een ouder heeft "${job?.title}" niet goedgekeurd.`);
+      } else if (job?.hostApprovedAt && kid?.push_token) {
+        sendPushNotification(kid.push_token, "Buurtklusje goedgekeurd! 🎉", `"${job.title}" is goedgekeurd — het bedrag staat klaar.`);
+      }
+    }
+  };
+
+  const mergeExternalEarnings = (childId) => {
+    const amount = S.members[childId]?.externalEarnedCents || 0;
+    if (!amount) return;
+    alertX("Samenvoegen met saldo", `${fmt(amount)} extern verdiend samenvoegen met het gewone saldo van ${S.members[childId]?.name}?`, [
+      { text: "Annuleren", style: "cancel" },
+      { text: "Ja, samenvoegen", onPress: async () => {
+          setS(s => ({ ...s,
+            members: { ...s.members, [childId]: { ...s.members[childId], externalEarnedCents: 0 } },
+            balances: { ...s.balances, [childId]: (s.balances[childId] || 0) + amount },
+          }));
+          await push.mergeExternalEarnings(childId);
+        } },
+    ]);
   };
 
   // Gratis premium-code inwisselen (fase 6b) — vereist een gezin-account, want de code
@@ -719,6 +828,7 @@ export default function App() {
   // ----- UI helpers -----
   const kids = Object.keys(S.members).filter(k => S.members[k].role === "kind");
   const guests = Object.keys(S.members).filter(k => S.members[k].role === "gast");
+  const hosts = Object.keys(S.members).filter(k => S.members[k].role === "host");
   const waiting = S.chores.filter(c => c.status === "waiting");
   const active = S.chores.filter(c => true);
   const myGoal = role === "kind" ? S.goals[me] : null;
@@ -817,6 +927,21 @@ export default function App() {
             </TouchableOpacity>
           </View>
         </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // Host (bv. de buurvrouw, uitgenodigd voor precies één kind) krijgt een losstaand,
+  // minimaal scherm — geen toegang tot de rest van het gezin. Alleen: klusjes aanbieden
+  // aan dat ene kind + zelf goedkeuren na uitchecken.
+  if (role === "host") {
+    const childName = S.members[M?.hostChildId]?.name;
+    const myJobs = S.neighborJobs.filter(j => j.hostId === me).slice().reverse();
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+        <StatusBar style={isDark ? "light" : "dark"} />
+        <HostView t={t} M={M} fmt={fmt} childName={childName} myJobs={myJobs}
+          onSubmit={submitNeighborJob} onDecide={decideNeighborJobAsHost} />
       </SafeAreaView>
     );
   }
@@ -1324,6 +1449,8 @@ export default function App() {
   };
 
   const pendingOffers = S.choreOffers.filter(o => o.status === "pending");
+  const neighborJobsAwaitingParent = S.neighborJobs.filter(j => j.status === "awaiting_approval" && !j.parentApprovedAt);
+  const myNeighborJobs = S.neighborJobs.filter(j => j.childId === me && j.status !== "declined");
 
   const Chores = () => (
     <>
@@ -1352,10 +1479,71 @@ export default function App() {
           ))}
         </>
       ) : null}
+      {role === "ouder" && neighborJobsAwaitingParent.length > 0 ? (
+        <>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>
+            BUURTKLUSJES — WACHT OP JOUW GOEDKEURING</Text>
+          {neighborJobsAwaitingParent.map(j => (
+            <Card t={t} key={j.id} style={{ marginBottom: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{j.title}</Text>
+                  <Text style={{ fontSize: 12, color: t.sub }}>
+                    {S.members[j.childId]?.name || "?"} · voor {S.members[j.hostId]?.name || "een host"}
+                    {j.hostApprovedAt ? " · host keurde al goed ✓" : ""}</Text>
+                </View>
+                <Amount t={t} size={20}>{fmt(j.cents)}</Amount>
+              </View>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                <PhotoBox t={t} uri={j.checkInUri} label="AANKOMST" />
+                <PhotoBox t={t} uri={j.checkOutUri} label="VERTREK" />
+              </View>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                <View style={{ flex: 1 }}><Btn t={t} small onPress={() => decideNeighborJobAsParent(j.id, "approved")}>Goedkeuren ✓</Btn></View>
+                <View style={{ flex: 1 }}><Btn t={t} small kind="ghost" onPress={() => decideNeighborJobAsParent(j.id, "declined")}>Afwijzen</Btn></View>
+              </View>
+            </Card>
+          ))}
+        </>
+      ) : null}
       {role === "ouder" && waiting.length > 0 ? (
         <>
           <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>GOED TE KEUREN</Text>
           {waiting.map(c => <ChoreCard key={c.id} c={c} />)}
+        </>
+      ) : null}
+      {role === "kind" && myNeighborJobs.length > 0 ? (
+        <>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>MIJN BUURTKLUSJES</Text>
+          {myNeighborJobs.map(j => (
+            <Card t={t} key={j.id} style={{ marginBottom: 10 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{j.title}</Text>
+                  <Text style={{ fontSize: 12, color: t.sub }}>
+                    Voor {S.members[j.hostId]?.name || "een host"} · {NEIGHBOR_JOB_STATUS_LABEL[j.status]}</Text>
+                </View>
+                <Amount t={t} size={20}>{fmt(j.cents)}</Amount>
+              </View>
+              {j.status === "open" ? (
+                <View style={{ marginTop: 10 }}>
+                  <Btn t={t} small onPress={() => checkinNeighborJob(j.id)}>📸 Inchecken (aankomst)</Btn>
+                </View>
+              ) : j.status === "in_progress" ? (
+                <>
+                  <View style={{ marginTop: 10 }}><PhotoBox t={t} uri={j.checkInUri} label="AANKOMST" /></View>
+                  <View style={{ marginTop: 10 }}>
+                    <Btn t={t} small onPress={() => checkoutNeighborJob(j.id)}>📸 Uitchecken (klaar)</Btn>
+                  </View>
+                </>
+              ) : (
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <PhotoBox t={t} uri={j.checkInUri} label="AANKOMST" />
+                  <PhotoBox t={t} uri={j.checkOutUri} label="VERTREK" />
+                </View>
+              )}
+            </Card>
+          ))}
         </>
       ) : null}
       <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginVertical: 10 }}>
@@ -1604,6 +1792,65 @@ export default function App() {
         </>
       ) : null}
 
+      {role === "ouder" ? (
+        <>
+          <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>
+            HOSTS — BUURTKLUSJES VAN BUITENAF</Text>
+          {hosts.length === 0 ? (
+            <Text style={{ fontSize: 12, color: t.sub, marginBottom: 12 }}>
+              Nog geen hosts uitgenodigd. Een host (bv. de buurvrouw) mag klusjes aanbieden aan
+              precies één kind — check-in/check-out met foto, en jij keurt elk klusje ook zelf goed.</Text>
+          ) : hosts.map((k) => {
+            const m = S.members[k];
+            return (
+              <Card t={t} key={k} style={{ marginBottom: 10 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 999, backgroundColor: t.soft,
+                    alignItems: "center", justifyContent: "center" }}><Text style={{ fontSize: 22 }}>{m.avatar}</Text></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{m.name}</Text>
+                    <Text style={{ fontSize: 12, color: t.sub }}>Host · voor {S.members[m.hostChildId]?.name || "?"}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}>
+                    <Text style={{ color: t.danger, fontWeight: "800", fontSize: 13 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              </Card>
+            );
+          })}
+          {fam.backendConfigured && S.familyId ? (
+            <Card t={t} style={{ marginBottom: 12 }}>
+              <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 10 }}>🏡 Host uitnodigen</Text>
+              {hostInviteCode ? (
+                <View style={{ alignItems: "center" }}>
+                  <View style={{ backgroundColor: "#fff", padding: 12, borderRadius: 12, marginBottom: 10 }}>
+                    <QRCode value={`${LEGAL_BASE}/join/${hostInviteCode}`} size={140} />
+                  </View>
+                  <Text style={{ fontWeight: "900", fontSize: 22, letterSpacing: 3, color: t.ink, marginBottom: 6 }}>{hostInviteCode}</Text>
+                  <Text style={{ fontSize: 12, color: t.sub, textAlign: "center" }}>
+                    Geldig 24 uur. Laat de host scannen, of de code intypen bij "Ik heb een code".</Text>
+                </View>
+              ) : kids.length === 0 ? (
+                <Text style={{ fontSize: 12, color: t.sub }}>Voeg eerst een kind toe voordat je een host kan uitnodigen.</Text>
+              ) : (
+                <>
+                  <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+                    Voor welk kind? De host mag daarna alleen klusjes aanbieden aan en zien van dit ene kind.</Text>
+                  {kids.map(k => (
+                    <View key={k} style={{ marginBottom: 6 }}>
+                      <Btn t={t} small kind="ghost" onPress={async () => {
+                        try { setHostInviteCode(await fam.createInvite(S.familyId, "host", k)); }
+                        catch { alertX("Dat ging niet goed", "Probeer het nog eens."); }
+                      }}>{S.members[k].avatar} Voor {S.members[k].name}</Btn>
+                    </View>
+                  ))}
+                </>
+              )}
+            </Card>
+          ) : null}
+        </>
+      ) : null}
+
       <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>SALDO PER KIND</Text>
       {Object.entries(S.balances).filter(([k]) => S.members[k]?.role === "kind").sort((a, b) => b[1] - a[1]).map(([k, v], i) => {
         const m = S.members[k];
@@ -1628,6 +1875,13 @@ export default function App() {
             {role === "ouder" && m.role === "kind" && v > 0 ? (
               <View style={{ marginTop: 10 }}>
                 <Btn t={t} small kind="ghost" onPress={() => payout(k)}>💶 Uitbetaald — registreer</Btn>
+              </View>
+            ) : null}
+            {role === "ouder" && m.role === "kind" && (m.externalEarnedCents || 0) > 0 ? (
+              <View style={{ marginTop: 10, backgroundColor: t.soft, borderRadius: 12, padding: 10 }}>
+                <Text style={{ fontSize: 12, color: t.sub, marginBottom: 6 }}>
+                  🏡 Extern verdiend (buurtklusjes): <Text style={{ fontWeight: "800", color: t.ink }}>{fmt(m.externalEarnedCents)}</Text></Text>
+                <Btn t={t} small onPress={() => mergeExternalEarnings(k)}>Samenvoegen met saldo</Btn>
               </View>
             ) : null}
             {role === "ouder" && m.role === "kind" ? (
@@ -2204,6 +2458,64 @@ function PricingIntro({ t, onContinue }) {
           <Text style={{ color: t.sub, fontSize: 12, textDecorationLine: "underline" }}>Voorwaarden</Text>
         </TouchableOpacity>
       </View>
+    </ScrollView>
+  );
+}
+
+// Losstaand, minimaal scherm voor een host (bv. de buurvrouw) — uitgenodigd door een
+// ouder voor precies één kind. Ziet nooit de rest van het gezin (feed/saldo's/foto's),
+// alleen zijn eigen buurtklusjes voor dat ene kind: aanmaken + goedkeuren na uitchecken.
+function HostView({ t, M, fmt, childName, myJobs, onSubmit, onDecide }) {
+  const [title, setTitle] = useState("");
+  const [euros, setEuros] = useState("");
+  const submit = () => {
+    const cents = Math.round(parseFloat(euros.replace(",", ".")) * 100);
+    if (!title.trim() || !cents || cents <= 0) { alertX("Vul een titel en een geldig bedrag in"); return; }
+    onSubmit({ title: title.trim(), cents });
+    setTitle(""); setEuros("");
+  };
+  const STATUS_LABEL = (j) => {
+    if (j.status === "open") return "⏳ Nog niet gestart";
+    if (j.status === "in_progress") return "🚶 Bezig (ingecheckt)";
+    if (j.status === "awaiting_approval") return j.hostApprovedAt ? "✅ Jij hebt goedgekeurd — wacht op een ouder" : "📋 Klaar gemeld — jouw goedkeuring nodig";
+    if (j.status === "approved") return "🎉 Goedgekeurd en uitbetaald";
+    return "❌ Afgewezen";
+  };
+  return (
+    <ScrollView contentContainerStyle={{ padding: 20 }}>
+      <Text style={{ fontSize: 24, fontWeight: "900", color: t.ink, marginBottom: 4 }}>Hoi {M?.name}! 👋</Text>
+      <Text style={{ fontSize: 13, color: t.sub, marginBottom: 20 }}>
+        Je bent uitgenodigd om klusjes aan te bieden aan {childName || "dit kind"}. Je ziet verder
+        niets anders van dit gezin — geen andere klusjes, saldo's of foto's.</Text>
+
+      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>NIEUW KLUSJE AANBIEDEN</Text>
+      <TextInput style={inputStyle(t)} placeholder="Titel (bijv. Gras maaien)" placeholderTextColor={t.sub}
+        value={title} onChangeText={setTitle} />
+      <TextInput style={inputStyle(t)} placeholder="Bedrag (bijv. 5,00)" placeholderTextColor={t.sub}
+        keyboardType="decimal-pad" value={euros} onChangeText={setEuros} />
+      <Btn t={t} onPress={submit}>Aanbieden aan {childName || "het kind"}</Btn>
+
+      <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginTop: 26, marginBottom: 10 }}>
+        MIJN BUURTKLUSJES</Text>
+      {myJobs.length === 0 ? (
+        <Text style={{ fontSize: 13, color: t.sub }}>Nog geen klusjes aangeboden.</Text>
+      ) : myJobs.map((j) => (
+        <Card t={t} key={j.id} style={{ marginBottom: 10 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{j.title}</Text>
+              <Text style={{ fontSize: 12, color: t.sub, marginTop: 2 }}>{STATUS_LABEL(j)}</Text>
+            </View>
+            <Amount t={t} size={18}>{fmt(j.cents)}</Amount>
+          </View>
+          {j.status === "awaiting_approval" && !j.hostApprovedAt ? (
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+              <View style={{ flex: 1 }}><Btn t={t} small onPress={() => onDecide(j.id, "approved")}>Goedkeuren ✓</Btn></View>
+              <View style={{ flex: 1 }}><Btn t={t} small kind="ghost" onPress={() => onDecide(j.id, "declined")}>Afwijzen</Btn></View>
+            </View>
+          ) : null}
+        </Card>
+      ))}
     </ScrollView>
   );
 }
