@@ -8,7 +8,7 @@ import Constants, { ExecutionEnvironment } from "expo-constants";
 // de hele bundel niet laat crashen. Web heeft een eigen bestand (AdSlot.web.js) dat deze
 // package helemaal niet importeert — Metro's web-bundler kan dit pakket niet bundelen
 // (het gebruikt React Native-interne modules die op web niet bestaan).
-const AD_UNIT_ID_REAL = "ca-app-pub-3747360356393074/5253643908";
+const AD_UNIT_ID_REAL = "ca-app-pub-3747360356393074/4176289970";
 const inExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 let BannerAd = null, BannerAdSize = null, TestIds = null;
 if (!inExpoGo) {
