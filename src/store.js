@@ -24,8 +24,16 @@ export const DEFAULT_STATE = {
     { id: 3, title: "Stofzuigen beneden", room: "Woonkamer", emoji: "🧹", cents: 250, status: "open", by: null },
   ],
   goals: {
-    emma: { id: uid(), name: "LEGO Technic kraan", emoji: "🧱", imageUri: null, target: 4999, saved: 0, link: "", approved: true },
-    daan: { id: uid(), name: "Nintendo-game", emoji: "🎮", imageUri: null, target: 5999, saved: 0, link: "", approved: false },
+    // per kind een LIJST van spaardoelen (niet meer één object) — gratis: max 2
+    // (zie FREE_GOAL_LIMIT in App.js), 3e/4e zit achter Premium.
+    emma: [
+      { id: uid(), name: "LEGO Technic kraan", emoji: "🧱", imageUri: null, target: 4999, saved: 0, link: "", approved: true },
+      { id: uid(), name: "Sparen", emoji: "🐷", imageUri: null, target: 5000, saved: 0, link: "", approved: true },
+    ],
+    daan: [
+      { id: uid(), name: "Nintendo-game", emoji: "🎮", imageUri: null, target: 5999, saved: 0, link: "", approved: false },
+      { id: uid(), name: "Sparen", emoji: "🐷", imageUri: null, target: 5000, saved: 0, link: "", approved: true },
+    ],
   },
   feed: [],
   homework: [],                    // huiswerk-items, per gezinslid (memberId-veld erin)
@@ -70,11 +78,16 @@ export async function loadState() {
     const raw = await AsyncStorage.getItem(KEY);
     if (!raw) return DEFAULT_STATE;
     const state = { ...DEFAULT_STATE, ...JSON.parse(raw) };
-    // Toestellen die dit spaardoel al vóór de invoering van `id` lokaal hadden staan
-    // (nooit hersynct via de wizard of AddGoalModal, die `id` allebei altijd zetten)
-    // zouden anders voorgoed een id-loos doel houden — en cloud-sync ervan negeren.
+    // Toestellen van vóór de meerdere-spaardoelen-update hadden `goals[kid]` als
+    // ÉÉN object staan (i.p.v. een lijst) — die hier omzetten naar een 1-lange lijst,
+    // anders verdwijnt dat bestaande doel voorgoed uit beeld. Meteen ook `id` invullen
+    // voor toestellen die dit doel al vóór de invoering van `id` lokaal hadden staan
+    // (nooit hersynct via de wizard of AddGoalModal, die `id` allebei altijd zetten) —
+    // zouden anders voorgoed een id-loos doel houden en cloud-sync ervan negeren.
     for (const key of Object.keys(state.goals || {})) {
-      if (!state.goals[key].id) state.goals[key] = { ...state.goals[key], id: uid() };
+      const v = state.goals[key];
+      const arr = Array.isArray(v) ? v : (v ? [v] : []);
+      state.goals[key] = arr.map(g => g.id ? g : { ...g, id: uid() });
     }
     return state;
   } catch {

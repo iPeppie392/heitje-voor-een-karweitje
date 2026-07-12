@@ -24,6 +24,15 @@ import { registerForPushToken, sendPushNotification } from "./src/notifications"
 import FamilySetup from "./src/screens/FamilySetup";
 
 const FREE_CHORE_LIMIT = 5; // free tier: max active chores (premium: unlimited)
+const FREE_GOAL_LIMIT = 2;  // free tier: max spaardoelen per kind (premium: onbeperkt) — standaard "Speelgoed" + "Sparen"
+
+// Twee standaard spaardoelen die elk nieuw kind meteen krijgt: één gericht doel
+// ("Speelgoed", met winkellink-goedkeuring) en één open, algemeen doel ("Sparen",
+// altijd al goedgekeurd — er is geen link waar een ouder toestemming voor moet geven).
+const defaultGoals = () => ([
+  { id: uid(), name: "Speelgoed", emoji: "🎁", imageUri: null, target: 1500, saved: 0, link: "", approved: true },
+  { id: uid(), name: "Sparen", emoji: "🐷", imageUri: null, target: 5000, saved: 0, link: "", approved: true },
+]);
 
 // Kandidaat-snelkoppelingen per rol voor Home — icon/label hier op één plek, zodat het
 // aanpas-lijstje (Sheet) en de knoppen zelf (in Feed) nooit uit de pas kunnen lopen.
@@ -316,21 +325,23 @@ export default function App() {
   const closeTour = () => { patch({ tourSeen: true }); setTourForced(false); setTourStep(0); };
 
   // Nieuw kind lokaal toevoegen (en meesynchroniseren als er al een gezin-account is).
-  // Krijgt meteen een standaard spaardoel ("Speelgoed") — zonder dat zou de
-  // sparen/saldo-keuze bij een afgerond klusje maar één echte optie hebben.
+  // Krijgt meteen 2 standaard spaardoelen (Speelgoed + Sparen, zie defaultGoals())
+  // — zonder dat zou de sparen-keuze bij een afgerond klusje geen echte optie hebben.
   const addKid = (kid) => {
     const key = uid();
-    const goal = { id: uid(), name: "Speelgoed", emoji: "🎁", imageUri: null, target: 1500, saved: 0, link: "", approved: true };
-    setS(s => ({ ...s, members: { ...s.members, [key]: kid }, balances: { ...s.balances, [key]: 0 }, goals: { ...s.goals, [key]: goal } }));
+    const goals = defaultGoals();
+    setS(s => ({ ...s, members: { ...s.members, [key]: kid }, balances: { ...s.balances, [key]: 0 }, goals: { ...s.goals, [key]: goals } }));
     setKidModal(false);
     if (S.familyId && fam.backendConfigured) {
       push.upsertMember(S.familyId, {
         id: key, name: kid.name, avatar: kid.avatar, age: kid.age, role: "kind", color: kid.color,
       });
-      push.upsertGoal(S.familyId, key, {
-        id: goal.id, name: goal.name, emoji: goal.emoji, image_uri: goal.imageUri,
-        target: goal.target, saved: goal.saved, link: goal.link, approved: goal.approved,
-      });
+      for (const goal of goals) {
+        push.upsertGoal(S.familyId, key, {
+          id: goal.id, name: goal.name, emoji: goal.emoji, image_uri: goal.imageUri,
+          target: goal.target, saved: goal.saved, link: goal.link, approved: goal.approved,
+        });
+      }
     }
   };
 
@@ -724,17 +735,21 @@ export default function App() {
   // wacht — vervangt het oude lokale-only S.pendingAlloc.
   const awaitingAllocation = S.chores.find(c => c.by === me && c.status === "approved" && !c.allocated);
 
-  const allocate = (toGoal) => {
+  // goalId: welk van de (meestal 2) spaardoelen van dit kind krijgt het bedrag —
+  // null betekent "algemeen saldo" (alleen nog een vangnet voor het randgeval dat
+  // een kind écht geen enkel spaardoel heeft, bijv. via een oude/kapotte cloud-sync).
+  const allocate = (goalId) => {
     if (!awaitingAllocation) return;
     const { id: choreId, by: kid, cents, title } = awaitingAllocation;
-    if (toGoal) {
-      // Vangnet voor kinderen die (bv. van vóór deze wijziging) nog geen spaardoel
-      // hebben — anders zou deze knop niets kunnen doen. Nieuwe kinderen krijgen een
-      // standaard doel al meteen bij het aanmaken (zie addKid/WelcomeWizard).
-      const isNew = !S.goals[kid];
-      const g = S.goals[kid] || { id: uid(), name: "Speelgoed", emoji: "🎁", imageUri: null, target: 1500, saved: 0, link: "", approved: true };
+    const kidGoals = S.goals[kid] || [];
+    const idx = goalId ? kidGoals.findIndex(x => x.id === goalId) : -1;
+    if (goalId && idx === -1 && kidGoals.length) return; // onbekend doel-id, niet stilzwijgend het verkeerde doel raken
+    if (goalId) {
+      const isNew = idx === -1;
+      const g = isNew ? { id: uid(), name: "Speelgoed", emoji: "🎁", imageUri: null, target: 1500, saved: 0, link: "", approved: true } : kidGoals[idx];
       const newSaved = g.saved + cents;
-      setS(s => ({ ...s, goals: { ...s.goals, [kid]: { ...g, saved: newSaved } }, chores: s.chores.filter(x => x.id !== choreId) }));
+      const newGoals = isNew ? [...kidGoals, { ...g, saved: newSaved }] : kidGoals.map((x, i) => i === idx ? { ...x, saved: newSaved } : x);
+      setS(s => ({ ...s, goals: { ...s.goals, [kid]: newGoals }, chores: s.chores.filter(x => x.id !== choreId) }));
       addFeed({ who: kid, badge: `🐷 ${fmt(cents)} gespaard voor ${g.name}` });
       // Naar een spaardoel: alleen goals.saved bijwerken, geen ledger-entry — die tabel
       // is puur de kasstroom, saldo in een spaardoel is daar bewust los van.
@@ -785,9 +800,9 @@ export default function App() {
     ]);
   };
 
-  const approveGoal = (kid) => {
-    setS(s => ({ ...s, goals: { ...s.goals, [kid]: { ...s.goals[kid], approved: true } } }));
-    const g = S.goals[kid];
+  const approveGoal = (kid, goalId) => {
+    setS(s => ({ ...s, goals: { ...s.goals, [kid]: (s.goals[kid] || []).map(g => g.id === goalId ? { ...g, approved: true } : g) } }));
+    const g = (S.goals[kid] || []).find(x => x.id === goalId);
     if (S.familyId && fam.backendConfigured && g?.id) push.updateGoal(g.id, { approved: true });
     const member = S.members[kid];
     if (member?.push_token && g) {
@@ -897,7 +912,8 @@ export default function App() {
   const hosts = Object.keys(S.members).filter(k => S.members[k].role === "host");
   const waiting = S.chores.filter(c => c.status === "waiting");
   const active = S.chores.filter(c => true);
-  const myGoal = role === "kind" ? S.goals[me] : null;
+  const myGoals = role === "kind" ? (S.goals[me] || []) : [];
+  const myGoal = myGoals[0] || null; // primair doel — gebruikt voor de compacte hero/dashboard-previews
 
   const Progress = ({ pct, uri, emoji, big }) => jr
     ? (
@@ -938,7 +954,7 @@ export default function App() {
           // Een echte verse start: ook de demo-klusjes/spaardoelen/feed weg, niet
           // alleen de demo-namen — anders blijft "Vaatwasser uitruimen" van Emma/Daan
           // gewoon in de pool staan voor een gezin dat nog nooit klusjes had. Elk kind
-          // krijgt hier al wel zijn eigen standaard "Speelgoed"-spaardoel mee (goals).
+          // krijgt hier al wel zijn eigen 2 standaard spaardoelen mee (zie defaultGoals()).
           setS(s => ({ ...s, members, balances, chores: [], goals: goals || {}, feed: [], screenGoals: {},
             setupDone: true, lastMe: null }));
           setMe(null);
@@ -1132,18 +1148,12 @@ export default function App() {
   };
 
   // ----- Goal card -----
-  const GoalCard = ({ kid, own }) => {
-    const g = S.goals[kid];
+  // Neemt tegenwoordig één spaardoel-object direct aan (i.p.v. het via `kid` op te
+  // zoeken) — de aanroeper (Sparen-tab/MemberCard) loopt over S.goals[kid], dat nu
+  // een LIJST van doelen is (max FREE_GOAL_LIMIT gratis), niet meer één object.
+  const GoalCard = ({ goal, kid, own }) => {
+    const g = goal;
     const m = S.members[kid];
-    if (!g) {
-      return kid === me ? (
-        <Card t={t} onPress={() => setGoalModal(true)} style={{ marginBottom: 12, alignItems: "center", borderStyle: "dashed" }}>
-          <Text style={{ fontSize: 26 }}>🐷</Text>
-          <Text style={{ fontWeight: "800", fontSize: 15, color: t.ink }}>＋ Spaardoel aanmaken</Text>
-          <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Papa of mama keurt het daarna goed</Text>
-        </Card>
-      ) : null;
-    }
     const pct = g.saved / g.target;
     if (own) {
       return (
@@ -1183,7 +1193,7 @@ export default function App() {
             {!g.approved ? <Text style={{ fontSize: 12, color: t.amber, fontWeight: "700", marginTop: 6 }}>⏳ Doel wacht op goedkeuring</Text> : null}
           </View>
           {role === "ouder" && !g.approved
-            ? <Btn t={t} small kind="success" onPress={() => approveGoal(kid)}>Keur goed ✓</Btn> : null}
+            ? <Btn t={t} small kind="success" onPress={() => approveGoal(kid, g.id)}>Keur goed ✓</Btn> : null}
         </View>
       </Card>
     );
@@ -1251,7 +1261,7 @@ export default function App() {
   // ----- Home / dashboard (het pronkstuk) -----
   const Feed = () => {
     const openCount = S.chores.filter(c => c.status === "open").length;
-    const totalSaved = Object.values(S.goals).reduce((a, g) => a + (g?.saved || 0), 0);
+    const totalSaved = Object.values(S.goals).reduce((a, list) => a + (list || []).reduce((b, g) => b + (g?.saved || 0), 0), 0);
     const doneCount = S.feed.filter(p => !p.badge).length;
     const kidBalances = Object.entries(S.balances).filter(([k]) => S.members[k]?.role === "kind");
     const topSaverKey = kidBalances.sort((a, b) => b[1] - a[1])[0]?.[0];
@@ -1300,7 +1310,7 @@ export default function App() {
 
     const MemberCard = ({ k, m }) => {
       const bal = S.balances[k];
-      const g = m.role === "kind" ? S.goals[k] : null;
+      const g = m.role === "kind" ? (S.goals[k] || [])[0] : null; // compacte preview: het eerste doel
       const active = activeChoreOf(k);
       const isMe = k === me;
       const statusText = active ? ({ claimed: "is bezig", before: "is bezig 📸",
@@ -1666,10 +1676,11 @@ export default function App() {
     <>
       {role === "kind" ? (
         <>
-          {/* Verdiend geld en schermtijd eerst, duidelijk bovenaan — de "tweede doel
+          {/* Verdiend geld en schermtijd eerst, duidelijk bovenaan — de "extra doel
               toevoegen"-upsell-kaartjes en de doelen van andere gezinsleden komen
-              bewust pas daaronder. */}
-          <GoalCard kid={me} own />
+              bewust pas daaronder. Gratis: 2 geld-doelen (Speelgoed + Sparen, zie
+              defaultGoals()); een 3e/4e zit achter Premium. */}
+          {myGoals.map(g => <GoalCard key={g.id} goal={g} kid={me} own />)}
           {showScreenSection ? (
             <>
               <ScreenTimer />
@@ -1677,14 +1688,20 @@ export default function App() {
             </>
           ) : null}
 
-          {S.goals[me] ? (
-            <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
-              onPress={() => alertX("Premium ✨", "Tweede geld-spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
-              <Text style={{ fontSize: 24 }}>🔒</Text>
-              <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Tweede geld-spaardoel</Text>
-              <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: 1 geld-doel · meer met Premium</Text>
+          {myGoals.length < FREE_GOAL_LIMIT ? (
+            <Card t={t} onPress={() => setGoalModal(true)} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}>
+              <Text style={{ fontSize: 24 }}>🐷</Text>
+              <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Spaardoel aanmaken</Text>
+              <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Papa of mama keurt het daarna goed</Text>
             </Card>
-          ) : null}
+          ) : (
+            <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
+              onPress={() => alertX("Premium ✨", "Een 3e of 4e geld-spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
+              <Text style={{ fontSize: 24 }}>🔒</Text>
+              <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Nog een geld-spaardoel</Text>
+              <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: {FREE_GOAL_LIMIT} geld-doelen · meer met Premium</Text>
+            </Card>
+          )}
           {showScreenSection && S.screenGoals[me] ? (
             <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
               onPress={() => alertX("Premium ✨", "Tweede schermtijd-spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
@@ -1694,12 +1711,12 @@ export default function App() {
             </Card>
           ) : null}
           <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>SPAARDOELEN VAN HET GEZIN</Text>
-          {kids.filter(k => k !== me).map(k => <GoalCard key={k} kid={k} />)}
+          {kids.filter(k => k !== me).flatMap(k => (S.goals[k] || []).map(g => <GoalCard key={g.id} goal={g} kid={k} />))}
         </>
       ) : (
         <>
           <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10 }}>SPAARDOELEN VAN DE KINDEREN</Text>
-          {kids.map(k => <GoalCard key={k} kid={k} />)}
+          {kids.flatMap(k => (S.goals[k] || []).map(g => <GoalCard key={g.id} goal={g} kid={k} />))}
           {showScreenSection ? (
             <>
               <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginBottom: 10, marginTop: 6 }}>SCHERMTIJD-SPAARDOELEN</Text>
@@ -2308,9 +2325,12 @@ export default function App() {
             <Text style={{ textAlign: "center", fontSize: jr ? 15 : 13, color: t.sub, marginBottom: 18 }}>
               {jr ? "Waar gaat het heen? 🤔" : `${awaitingAllocation?.title || ""} — waar gaat het heen?`}</Text>
             <View style={{ gap: 10 }}>
-              <Btn t={t} jr={jr} onPress={() => allocate(true)}>
-                🎁 {jr ? `Sparen voor ${S.goals[me]?.name || "speelgoed"}!` : `Naar mijn spaardoel (${S.goals[me]?.name || "Speelgoed"})`}</Btn>
-              <Btn t={t} jr={jr} kind="ghost" onPress={() => allocate(false)}>🐷 {jr ? "Gewoon sparen!" : "Algemeen sparen"}</Btn>
+              {myGoals.length ? myGoals.map((g, i) => (
+                <Btn key={g.id} t={t} jr={jr} kind={i === 0 ? "primary" : "ghost"} onPress={() => allocate(g.id)}>
+                  {g.emoji} {jr ? (g.name.toLowerCase() === "sparen" ? "Gewoon sparen!" : `Sparen voor ${g.name}!`) : `Naar ${g.name}`}</Btn>
+              )) : (
+                <Btn t={t} jr={jr} onPress={() => allocate(null)}>🐷 {jr ? "Gewoon sparen!" : "Algemeen sparen"}</Btn>
+              )}
             </View>
           </View>
         </View>
@@ -2329,7 +2349,7 @@ export default function App() {
         }} />
       <AddGoalModal t={t} visible={goalModal} onClose={() => setGoalModal(false)} pickImage={pickImage}
         onAdd={(goal) => {
-          setS(s => ({ ...s, goals: { ...s.goals, [me]: goal } }));
+          setS(s => ({ ...s, goals: { ...s.goals, [me]: [...(s.goals[me] || []), goal] } }));
           setGoalModal(false);
           if (S.familyId && fam.backendConfigured) {
             push.upsertGoal(S.familyId, me, {
@@ -3154,7 +3174,7 @@ function WelcomeWizard({ t, onComplete }) {
       const key = uid();
       members[key] = { name: k.name, avatar: k.avatar, age: k.age, role: "kind", streak: 0, color: KID_COLORS[i % KID_COLORS.length] };
       balances[key] = 0;
-      goals[key] = { id: uid(), name: "Speelgoed", emoji: "🎁", imageUri: null, target: 1500, saved: 0, link: "", approved: true };
+      goals[key] = defaultGoals();
     });
     onComplete(members, balances, goals);
   };

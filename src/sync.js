@@ -53,12 +53,15 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkIt
     hostApprovedAt: j.host_approved_at, parentApprovedAt: j.parent_approved_at, recurring: j.recurring || false,
   }));
 
+  // Een kind kan meerdere spaardoelen hebben (gratis: 2, meer met Premium) — dus per
+  // kid_id een LIJST opbouwen, niet één object overschrijven (dat verloor voorheen
+  // alle doelen behalve de laatst verwerkte rij).
   const goalsById = {};
   for (const g of goals) {
-    goalsById[g.kid_id] = {
+    (goalsById[g.kid_id] = goalsById[g.kid_id] || []).push({
       id: g.id, name: g.name, emoji: g.emoji, imageUri: g.image_uri,
       target: g.target, saved: g.saved, link: g.link, approved: g.approved,
-    };
+    });
   }
 
   const screenGoalsById = {};
