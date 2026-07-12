@@ -94,13 +94,21 @@ create policy ledger_select on ledger_entries for select using (is_family_core_m
 drop policy if exists ledger_insert on ledger_entries;
 create policy ledger_insert on ledger_entries for insert with check (is_family_core_member(family_id));
 
-drop policy if exists screentime_goals_all on screentime_goals;
-create policy screentime_goals_all on screentime_goals for all
-  using (is_family_core_member(family_id)) with check (is_family_core_member(family_id));
-
-drop policy if exists homework_all on homework_items;
-create policy homework_all on homework_items for all
-  using (is_family_core_member(family_id)) with check (is_family_core_member(family_id));
+-- screentime_goals/homework_items bestaan pas als sql/006/005 al gedraaid zijn — niet
+-- elk project heeft die per se al gehad, dus dit mag het hele script niet laten falen.
+do $$
+begin
+  if to_regclass('public.screentime_goals') is not null then
+    execute 'drop policy if exists screentime_goals_all on screentime_goals';
+    execute 'create policy screentime_goals_all on screentime_goals for all
+      using (is_family_core_member(family_id)) with check (is_family_core_member(family_id))';
+  end if;
+  if to_regclass('public.homework_items') is not null then
+    execute 'drop policy if exists homework_all on homework_items';
+    execute 'create policy homework_all on homework_items for all
+      using (is_family_core_member(family_id)) with check (is_family_core_member(family_id))';
+  end if;
+end $$;
 
 -- members_select blijft breder dan de rest (een host moet tenminste zijn eigen rij en
 -- die van zijn gekoppelde kind kunnen lezen, voor naam/avatar in de UI) — expliciet
