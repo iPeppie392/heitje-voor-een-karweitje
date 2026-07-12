@@ -7,6 +7,9 @@ import {
 
 const LEGAL_BASE = "https://heitje-voor-een-karweitje-five.vercel.app";
 import { StatusBar } from "expo-status-bar";
+import * as StoreReview from "expo-store-review";
+import * as Sharing from "expo-sharing";
+import { captureRef } from "react-native-view-shot";
 import * as ImagePicker from "expo-image-picker";
 import QRCode from "react-native-qrcode-svg";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -304,6 +307,9 @@ export default function App() {
   }, []);
   const [helpOpen, setHelpOpen] = useState(false);
   const [quickShareOpen, setQuickShareOpen] = useState(false);
+  const [shareCard, setShareCard] = useState(null); // { headline, kidName, kidAvatar } | null
+  const [shareShowName, setShareShowName] = useState(false); // privacy: standaard GEEN kindnaam op de gedeelde afbeelding
+  const shareCardRef = useRef(null);
   const [helpQuery, setHelpQuery] = useState("");
   const filteredHelp = HELP_TOPICS.filter(h =>
     !helpQuery.trim() || (h.title + " " + h.body).toLowerCase().includes(helpQuery.trim().toLowerCase()));
@@ -571,6 +577,40 @@ export default function App() {
     if (!hit) return;
     addFeed({ who: kidId, badge: `🏆 ${hit} klusjes gedaan!` });
     setS(s => ({ ...s, milestonesSeen: { ...s.milestonesSeen, [kidId]: [...(s.milestonesSeen[kidId] || []), hit] } }));
+    maybeAskForReview();
+  };
+
+  // Vraagt de native store-review-popup (Apple/Google) — alleen aan ouders (zij
+  // hebben het account), alleen op een positief moment (mijlpaal/spaardoel/uitbetaling),
+  // en met een ruime lokale afkoeltijd zodat het nooit als opdringerig aanvoelt. Apple
+  // begrenst dit sowieso al tot 3x/jaar op OS-niveau; deze afkoeltijd blijft daar ruim onder.
+  const REVIEW_COOLDOWN_DAYS = 120;
+  const maybeAskForReview = async () => {
+    if (role !== "ouder") return;
+    const last = S.reviewPromptAskedAt ? new Date(S.reviewPromptAskedAt).getTime() : 0;
+    if (Date.now() - last < REVIEW_COOLDOWN_DAYS * 86400000) return;
+    const available = await StoreReview.isAvailableAsync();
+    if (!available) return;
+    setS(s => ({ ...s, reviewPromptAskedAt: new Date().toISOString() }));
+    StoreReview.requestReview();
+  };
+
+  // Deelbare mijlpaal-kaart (Strava/Life360-stijl groei via social proof, i.p.v. een
+  // verwijs-bonus die als spam kan voelen) — GEEN beloning gekoppeld aan delen, en de
+  // kindnaam staat er standaard NIET op (privacy: expliciete opt-in via de schakelaar
+  // in het deel-scherm, zie shareShowName hieronder).
+  const shareCardImage = async () => {
+    try {
+      const uri = await captureRef(shareCardRef, { format: "png", quality: 0.95 });
+      if (Platform.OS === "web") {
+        const a = document.createElement("a");
+        a.href = uri; a.download = "heitje-mijlpaal.png"; a.click();
+      } else if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: "image/png", dialogTitle: "Deel dit moment" });
+      }
+    } catch {
+      alertX("Dat ging niet goed", "Kon de afbeelding niet maken. Probeer het nog eens.");
+    }
   };
 
   const react = (id, e) => {
@@ -711,6 +751,7 @@ export default function App() {
         boom();
         addFeed({ who: kid, badge: `🎉 SPAARDOEL BEREIKT: ${g.name}!` });
         alertX("DOEL BEREIKT! 🎉", "Papa en mama: tijd om te kopen 🛒");
+        maybeAskForReview();
       }
     } else {
       setS(s => ({ ...s, balances: { ...s.balances, [kid]: s.balances[kid] + cents }, chores: s.chores.filter(x => x.id !== choreId) }));
@@ -739,6 +780,7 @@ export default function App() {
           if (S.familyId && fam.backendConfigured && paidCents) {
             push.addLedgerEntry(S.familyId, { member_id: kid, cents: -paidCents, kind: "payout" });
           }
+          if (paidCents) maybeAskForReview();
         } },
     ]);
   };
@@ -1439,6 +1481,12 @@ export default function App() {
             {p.badge ? (
               <View style={{ marginTop: 12, backgroundColor: t.soft, borderRadius: 14, padding: 16, alignItems: "center" }}>
                 <Text style={{ fontWeight: "800", fontSize: 16, color: t.accentDk, textAlign: "center" }}>{p.badge}</Text>
+                {role === "ouder" && (p.badge.includes("klusjes gedaan!") || p.badge.includes("SPAARDOEL BEREIKT")) ? (
+                  <TouchableOpacity onPress={() => { setShareShowName(false); setShareCard({ headline: p.badge.replace(/^[^\s]+\s/, ""), kidName: m.name, kidAvatar: m.avatar }); }}
+                    style={{ marginTop: 12, flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Text style={{ fontSize: 13, fontWeight: "800", color: t.accent }}>📤 Deel dit moment</Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
             ) : (
               <>
@@ -2338,6 +2386,38 @@ export default function App() {
           }}>Uitnodiging maken voor een 2e ouder</Btn>
         )}
       </Sheet>
+      <Sheet t={t} visible={!!shareCard} onClose={() => setShareCard(null)} title="📤 Deel dit moment">
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 14, textAlign: "center" }}>
+          Een leuk plaatje om te delen — geen account of aankoop nodig voor wie het ziet.</Text>
+        {shareCard ? (
+          <>
+            <View style={{ alignItems: "center", marginBottom: 16 }}>
+              <View ref={shareCardRef} collapsable={false} style={{ width: 300, aspectRatio: 1, borderRadius: 24,
+                backgroundColor: t.accent, alignItems: "center", justifyContent: "center", padding: 24 }}>
+                <Text style={{ fontSize: 54, marginBottom: 10 }}>🏆</Text>
+                <Text style={{ fontSize: 21, fontWeight: "900", color: "#fff", textAlign: "center" }}>{shareCard.headline}</Text>
+                {shareShowName ? (
+                  <Text style={{ fontSize: 15, fontWeight: "700", color: "rgba(255,255,255,0.85)", marginTop: 10, textAlign: "center" }}>
+                    {shareCard.kidAvatar} {shareCard.kidName}</Text>
+                ) : null}
+                <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.25)", width: "100%", alignItems: "center" }}>
+                  <Text style={{ fontSize: 15, fontWeight: "900", color: "#fff" }}>Heitje voor een karweitje</Text>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "rgba(255,255,255,0.7)", marginTop: 2 }}>heitjevooreenkarweitje.eu</Text>
+                </View>
+              </View>
+            </View>
+            <TouchableOpacity onPress={() => setShareShowName(v => !v)}
+              style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 16 }}>
+              <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: t.accent,
+                alignItems: "center", justifyContent: "center", backgroundColor: shareShowName ? t.accent : "transparent" }}>
+                {shareShowName ? <Text style={{ color: "#fff", fontSize: 13, fontWeight: "900" }}>✓</Text> : null}
+              </View>
+              <Text style={{ fontSize: 13, color: t.sub, fontWeight: "700" }}>Naam van {shareCard.kidName} op de kaart tonen</Text>
+            </TouchableOpacity>
+            <Btn t={t} onPress={shareCardImage}>📤 Delen</Btn>
+          </>
+        ) : null}
+      </Sheet>
       <Sheet t={t} visible={avatarPickerOpen} onClose={() => setAvatarPickerOpen(false)} title="🦊 Avatar kiezen">
         <Text style={{ fontSize: 12, color: t.sub, marginBottom: 14 }}>
           Extra avatars komen vrij bij een klusjes-mijlpaal (10, 25, 50, 100 klusjes).</Text>
@@ -3034,8 +3114,21 @@ const KID_COLORS = ["#7C3AED", "#0EA5E9", "#F59E0B", "#EC4899", "#16A34A", "#EF4
 
 // Allereerste keer opstarten: welkom + korte uitleg, dan zelf de echte namen invoeren
 // in plaats van de demo-namen (Emma/Daan/Papa/Mama) te houden.
+// Prioriteit-keuze + demo-klusje zitten bewust VOOR het invullen van namen/geboortedata —
+// het "aha-moment" (zelf een klusje afronden en meteen een beloning zien) komt zo eerder
+// dan het administratieve werk, in plaats van pas na de hele instelprocedure.
+const WIZARD_DEMO_CHORES = {
+  klusjes: { title: "Kamer opruimen", emoji: "🧹", reward: "€ 2,00" },
+  zakgeld: { title: "Auto wassen", emoji: "🚗", reward: "€ 3,00" },
+  schermtijd: { title: "Huiswerk maken", emoji: "📚", reward: "20 min schermtijd" },
+};
+
 function WelcomeWizard({ t, onComplete }) {
-  const [stage, setStage] = useState("welcome"); // "welcome" | "names"
+  const [stage, setStage] = useState("welcome"); // "welcome" | "priority" | "demo" | "names"
+  const [priority, setPriority] = useState("klusjes");
+  const [demoDone, setDemoDone] = useState(false);
+  const [demoConfetti, setDemoConfetti] = useState(false);
+  const boomLocal = () => { setDemoConfetti(false); setTimeout(() => setDemoConfetti(true), 30); setTimeout(() => setDemoConfetti(false), 2200); };
   const [parentName, setParentName] = useState("");
   const [parentAvatar, setParentAvatar] = useState(PARENT_AVATARS[0]);
   const [kids, setKids] = useState([]); // [{name, avatar, age}]
@@ -3076,7 +3169,65 @@ function WelcomeWizard({ t, onComplete }) {
           voor een karweitje</Text>
         <Text style={{ fontSize: 19, fontWeight: "700", color: t.ink, textAlign: "center", lineHeight: 26, marginTop: 14, marginBottom: 26 }}>
           Met klusjes je zakgeld verdienen op een leuke manier</Text>
-        <Btn t={t} onPress={() => setStage("names")}>Aan de slag</Btn>
+        <Btn t={t} onPress={() => setStage("priority")}>Aan de slag</Btn>
+      </ScrollView>
+    );
+  }
+
+  if (stage === "priority") {
+    const OPTIONS = [
+      { key: "klusjes", icon: "🧹", label: "Klusjes verdelen" },
+      { key: "zakgeld", icon: "🐷", label: "Zakgeld & sparen" },
+      { key: "schermtijd", icon: "⏱️", label: "Schermtijd verdienen" },
+    ];
+    return (
+      <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 28 }}>
+        <Text style={{ fontSize: 22, fontWeight: "900", color: t.ink, textAlign: "center", marginBottom: 8 }}>
+          Waar wil je dit gezin vooral mee helpen?</Text>
+        <Text style={{ fontSize: 13, color: t.sub, textAlign: "center", marginBottom: 24 }}>
+          Geen zorgen, alles zit sowieso in de app — dit bepaalt alleen het voorbeeld hierna.</Text>
+        <View style={{ gap: 10 }}>
+          {OPTIONS.map(o => (
+            <Card key={o.key} t={t} onPress={() => { setPriority(o.key); setStage("demo"); }}
+              style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+              <Text style={{ fontSize: 26 }}>{o.icon}</Text>
+              <Text style={{ fontWeight: "800", fontSize: 16, color: t.ink, flex: 1 }}>{o.label}</Text>
+              <Text style={{ fontSize: 18, color: t.sub }}>›</Text>
+            </Card>
+          ))}
+        </View>
+      </ScrollView>
+    );
+  }
+
+  if (stage === "demo") {
+    const demo = WIZARD_DEMO_CHORES[priority];
+    return (
+      <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 28 }}>
+        <Text style={{ fontSize: 22, fontWeight: "900", color: t.ink, textAlign: "center", marginBottom: 6 }}>
+          Zo werkt het — probeer maar!</Text>
+        <Text style={{ fontSize: 13, color: t.sub, textAlign: "center", marginBottom: 22 }}>
+          Dit is maar een voorbeeld, jullie eigen gezin komt zo.</Text>
+        <Card t={t} style={{ marginBottom: 20 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <Text style={{ fontSize: 30 }}>{demo.emoji}</Text>
+            <Text style={{ fontWeight: "800", fontSize: 17, color: t.ink, flex: 1 }}>{demo.title}</Text>
+            <Text style={{ fontWeight: "900", fontSize: 16, color: t.accent }}>{demo.reward}</Text>
+          </View>
+          {!demoDone ? (
+            <View style={{ marginTop: 14 }}>
+              <Btn t={t} kind="success" onPress={() => { setDemoDone(true); boomLocal(); }}>✅ Klaar! Laat kijken</Btn>
+            </View>
+          ) : (
+            <View style={{ marginTop: 14, alignItems: "center" }}>
+              <Text style={{ fontSize: 34 }}>🎉</Text>
+              <Text style={{ fontWeight: "800", fontSize: 15, color: t.ink, textAlign: "center", marginTop: 4 }}>
+                Precies zo simpel is het! Papa of mama keurt dit soort klusjes straks met één tik goed.</Text>
+            </View>
+          )}
+        </Card>
+        {demoDone ? <Btn t={t} onPress={() => setStage("names")}>Verder naar mijn gezin →</Btn> : null}
+        <Confetti show={demoConfetti} />
       </ScrollView>
     );
   }

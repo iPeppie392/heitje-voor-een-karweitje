@@ -61,6 +61,8 @@ export const DEFAULT_STATE = {
   // Fase 5 — onboarding & hulp.
   tourEnabled: true,      // eerste-keer tour-guide + het (i)-knopje aan/uit
   tourSeen: false,        // is de eerste-keer tour al een keer doorlopen op dit toestel?
+
+  reviewPromptAskedAt: null, // ISO-datum van de laatste native store-review-vraag op dit toestel (device-only, niet gesynct)
 };
 
 export async function loadState() {

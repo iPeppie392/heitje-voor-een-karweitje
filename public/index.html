@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
     <title>%WEB_TITLE%</title>
     <meta name="description" content="Klusjes, zakgeld en schermtijd voor het hele gezin — gratis, geen reclame bij kinderen, geen echt geld in de app." />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#7C3AED" />
@@ -24,8 +24,12 @@
       html,
       body {
         height: 100%;
-        height: 100dvh; /* volgt de écht zichtbare hoogte op mobiel i.p.v. de vaste 100% */
-        overscroll-behavior: none; /* voorkomt dat scroll-bounce "doorlekt" naar de mobiele browser-chrome (adresbalk in/uitklappen) tijdens het scrollen in de app */
+        height: 100dvh; /* fallback zolang het onderstaande script nog niet gedraaid heeft */
+        height: var(--app-height, 100dvh); /* zie script hieronder — volgt de ECHTE
+          zichtbare iOS/Android-viewporthoogte live tijdens het scrollen, want zelfs
+          100dvh reageert niet snel genoeg tijdens de in-/uitklap-animatie van de
+          mobiele adresbalk (vandaar dat de balk/klok er nog voor de helft achter school). */
+        overscroll-behavior: none; /* voorkomt dat scroll-bounce "doorlekt" naar de mobiele browser-chrome tijdens het scrollen in de app */
       }
       /* These styles disable body scrolling if you are using <ScrollView> — position:
          fixed zet de hele app-shell letterlijk vast op het viewport, zodat alleen de
@@ -36,6 +40,11 @@
         position: fixed;
         inset: 0;
         width: 100%;
+        /* translate volgt live de visual-viewport-offset (zie script) — zonder dit
+           blijft dit element op de LAYOUT-viewport staan terwijl de klok/adresbalk
+           de VISUAL viewport tijdelijk verschuift, waardoor de rand van de app half
+           achter de systeembalken verdwijnt tijdens het scrollen. */
+        transform: translate(var(--app-offset-x, 0px), var(--app-offset-y, 0px));
       }
       /* These styles make the root element full-height */
       #root {
@@ -44,6 +53,36 @@
         flex: 1;
       }
     </style>
+    <script>
+      // iOS Safari (en sommige Android-browsers) laten de "visual viewport" (wat je
+      // écht ziet) tijdelijk afwijken van de "layout viewport" tijdens het in-/uitklappen
+      // van de adresbalk — zelfs position:fixed-elementen kunnen daardoor even voor een
+      // deel achter de systeembalk/klok verdwijnen. window.visualViewport geeft de ECHTE
+      // waarde en stuurt live resize/scroll-events tijdens die animatie, dus dat volgen
+      // we hier i.p.v. te vertrouwen op een CSS-eenheid alleen.
+      (function () {
+        function setAppHeight() {
+          var vv = window.visualViewport;
+          var h = vv ? vv.height : window.innerHeight;
+          document.documentElement.style.setProperty("--app-height", h + "px");
+          // offsetTop/offsetLeft: hoever de visual viewport is weggeschoven t.o.v. de
+          // layout viewport (o.a. tijdens het slepen aan de adresbalk, of rubber-band-
+          // bounce bovenaan) — dat verschil compenseren we door de vaste body evenveel
+          // terug te schuiven, zodat hij altijd exact het echte zichtbare vlak volgt.
+          if (vv) {
+            document.documentElement.style.setProperty("--app-offset-x", vv.offsetLeft + "px");
+            document.documentElement.style.setProperty("--app-offset-y", vv.offsetTop + "px");
+          }
+        }
+        setAppHeight();
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener("resize", setAppHeight);
+          window.visualViewport.addEventListener("scroll", setAppHeight);
+        }
+        window.addEventListener("resize", setAppHeight);
+        window.addEventListener("orientationchange", setAppHeight);
+      })();
+    </script>
   </head>
 
   <body>
