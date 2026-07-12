@@ -50,7 +50,7 @@ export function rowsToLocalShape({ members, chores, goals, feedPosts, homeworkIt
   const neighborJobsOut = (neighborJobs || []).map((j) => ({
     id: j.id, childId: j.child_id, hostId: j.host_id, title: j.title, cents: j.cents, status: j.status,
     checkInUri: j.check_in_uri, checkInAt: j.check_in_at, checkOutUri: j.check_out_uri, checkOutAt: j.check_out_at,
-    hostApprovedAt: j.host_approved_at, parentApprovedAt: j.parent_approved_at,
+    hostApprovedAt: j.host_approved_at, parentApprovedAt: j.parent_approved_at, recurring: j.recurring || false,
   }));
 
   const goalsById = {};

@@ -406,14 +406,14 @@ export default function App() {
   // sql/008_neighbor_jobs.sql) — hier alleen optimistisch de eigen velden bijwerken en
   // vertrouwen op de eerstvolgende realtime-pull voor de definitieve status, zelfde
   // patroon als decideChoreOffer hierboven (nooit lokaal de serverlogica nadoen).
-  const submitNeighborJob = ({ title, cents }) => {
+  const submitNeighborJob = ({ title, cents, recurring }) => {
     const childId = S.members[me]?.hostChildId;
     if (!childId) return;
     const id = uid();
-    const job = { id, childId, hostId: me, title, cents, status: "open" };
+    const job = { id, childId, hostId: me, title, cents, status: "open", recurring: !!recurring };
     setS(s => ({ ...s, neighborJobs: [...s.neighborJobs, job] }));
     if (S.familyId && fam.backendConfigured) {
-      push.createNeighborJob(S.familyId, { id, child_id: childId, host_id: me, title, cents });
+      push.createNeighborJob(S.familyId, { id, child_id: childId, host_id: me, title, cents, recurring: !!recurring });
       for (const parent of Object.values(S.members).filter(m => m.role === "ouder")) {
         if (parent.push_token) sendPushNotification(parent.push_token, "Nieuw buurtklusje",
           `${M?.name || "Iemand"} biedt ${S.members[childId]?.name || "een kind"} een klusje aan: ${title}`);
@@ -1487,7 +1487,7 @@ export default function App() {
             <Card t={t} key={j.id} style={{ marginBottom: 10 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{j.title}</Text>
+                  <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{j.title}{j.recurring ? " 🔁" : ""}</Text>
                   <Text style={{ fontSize: 12, color: t.sub }}>
                     {S.members[j.childId]?.name || "?"} · voor {S.members[j.hostId]?.name || "een host"}
                     {j.hostApprovedAt ? " · host keurde al goed ✓" : ""}</Text>
@@ -1519,7 +1519,7 @@ export default function App() {
             <Card t={t} key={j.id} style={{ marginBottom: 10 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{j.title}</Text>
+                  <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{j.title}{j.recurring ? " 🔁" : ""}</Text>
                   <Text style={{ fontSize: 12, color: t.sub }}>
                     Voor {S.members[j.hostId]?.name || "een host"} · {NEIGHBOR_JOB_STATUS_LABEL[j.status]}</Text>
                 </View>
@@ -2468,11 +2468,12 @@ function PricingIntro({ t, onContinue }) {
 function HostView({ t, M, fmt, childName, myJobs, onSubmit, onDecide }) {
   const [title, setTitle] = useState("");
   const [euros, setEuros] = useState("");
+  const [recurring, setRecurring] = useState(false);
   const submit = () => {
     const cents = Math.round(parseFloat(euros.replace(",", ".")) * 100);
     if (!title.trim() || !cents || cents <= 0) { alertX("Vul een titel en een geldig bedrag in"); return; }
-    onSubmit({ title: title.trim(), cents });
-    setTitle(""); setEuros("");
+    onSubmit({ title: title.trim(), cents, recurring });
+    setTitle(""); setEuros(""); setRecurring(false);
   };
   const STATUS_LABEL = (j) => {
     if (j.status === "open") return "⏳ Nog niet gestart";
@@ -2493,6 +2494,17 @@ function HostView({ t, M, fmt, childName, myJobs, onSubmit, onDecide }) {
         value={title} onChangeText={setTitle} />
       <TextInput style={inputStyle(t)} placeholder="Bedrag (bijv. 5,00)" placeholderTextColor={t.sub}
         keyboardType="decimal-pad" value={euros} onChangeText={setEuros} />
+      <TouchableOpacity onPress={() => setRecurring(v => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: recurring ? t.accent : t.line,
+          backgroundColor: recurring ? t.accent : "transparent", alignItems: "center", justifyContent: "center" }}>
+          {recurring ? <Text style={{ color: "#fff", fontSize: 14, fontWeight: "900" }}>✓</Text> : null}
+        </View>
+        <Text style={{ fontSize: 14, color: t.ink, fontWeight: "700" }}>🔁 Terugkerend klusje</Text>
+      </TouchableOpacity>
+      {recurring ? (
+        <Text style={{ fontSize: 12, color: t.sub, marginTop: -6, marginBottom: 12 }}>
+          Na elke goedkeuring verschijnt dit klusje automatisch weer open te staan.</Text>
+      ) : null}
       <Btn t={t} onPress={submit}>Aanbieden aan {childName || "het kind"}</Btn>
 
       <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginTop: 26, marginBottom: 10 }}>
@@ -2503,7 +2515,7 @@ function HostView({ t, M, fmt, childName, myJobs, onSubmit, onDecide }) {
         <Card t={t} key={j.id} style={{ marginBottom: 10 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{j.title}</Text>
+              <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{j.title}{j.recurring ? " 🔁" : ""}</Text>
               <Text style={{ fontSize: 12, color: t.sub, marginTop: 2 }}>{STATUS_LABEL(j)}</Text>
             </View>
             <Amount t={t} size={18}>{fmt(j.cents)}</Amount>
