@@ -2858,6 +2858,7 @@ function AddHomeworkModal({ t, visible, onClose, onAdd, role, me, kids, members,
     if (role === "ouder" && (!forKid || !kids.includes(forKid))) setForKid(kids[0] || null);
   }, [kids.join(",")]);
   const submit = () => {
+    if (role === "ouder" && kids.length === 0) { alertX("Nog geen kinderen in het gezin", "Voeg eerst een kind toe bij Gezin, dan kun je huiswerk toewijzen."); return; }
     if (!title.trim()) { alertX("Vul een titel in"); return; }
     const memberId = role === "ouder" ? forKid : me;
     if (!memberId) { alertX("Kies voor welk kind dit huiswerk is"); return; }
@@ -2884,16 +2885,24 @@ function AddHomeworkModal({ t, visible, onClose, onAdd, role, me, kids, members,
   };
   return (
     <Sheet t={t} visible={visible} onClose={onClose} title="📚 Nieuw huiswerk">
-      {role === "ouder" && kids.length > 1 ? (
-        <View style={{ flexDirection: "row", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-          {kids.map(k => (
-            <TouchableOpacity key={k} onPress={() => setForKid(k)} style={{ paddingHorizontal: 12, paddingVertical: 8,
-              borderRadius: 999, backgroundColor: forKid === k ? t.accent : t.soft }}>
-              <Text style={{ color: forKid === k ? "#fff" : t.ink, fontWeight: "700", fontSize: 13 }}>
-                {members[k]?.avatar} {members[k]?.name}</Text>
-            </TouchableOpacity>
-          ))}
+      {role === "ouder" && kids.length > 0 ? (
+        <View style={{ marginBottom: 14 }}>
+          <Text style={{ fontSize: 12, fontWeight: "800", letterSpacing: 0.5, color: t.sub, marginBottom: 8 }}>
+            VOOR WELK KIND?</Text>
+          <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+            {kids.map(k => (
+              <TouchableOpacity key={k} onPress={() => setForKid(k)} style={{ paddingHorizontal: 12, paddingVertical: 8,
+                borderRadius: 999, backgroundColor: forKid === k ? t.accent : t.soft, borderWidth: 2,
+                borderColor: forKid === k ? t.accent : "transparent" }}>
+                <Text style={{ color: forKid === k ? "#fff" : t.ink, fontWeight: "700", fontSize: 13 }}>
+                  {members[k]?.avatar} {members[k]?.name}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
+      ) : role === "ouder" ? (
+        <Text style={{ fontSize: 13, color: t.sub, marginBottom: 14 }}>
+          Nog geen kinderen in het gezin — voeg er eerst een toe bij Gezin.</Text>
       ) : null}
       <TextInput style={inputStyle(t)} placeholder="Titel (bijv. Rekenen blz. 24)" placeholderTextColor={t.sub}
         value={title} onChangeText={setTitle} />
