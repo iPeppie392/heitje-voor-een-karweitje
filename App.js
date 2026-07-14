@@ -3132,23 +3132,9 @@ function computeAgeFromDate(day, month, year, maxAge = 17) {
 
 const KID_COLORS = ["#7C3AED", "#0EA5E9", "#F59E0B", "#EC4899", "#16A34A", "#EF4444"];
 
-// Allereerste keer opstarten: welkom + korte uitleg, dan zelf de echte namen invoeren
+// Allereerste keer opstarten: meteen de echte namen invoeren
 // in plaats van de demo-namen (Emma/Daan/Papa/Mama) te houden.
-// Prioriteit-keuze + demo-klusje zitten bewust VOOR het invullen van namen/geboortedata —
-// het "aha-moment" (zelf een klusje afronden en meteen een beloning zien) komt zo eerder
-// dan het administratieve werk, in plaats van pas na de hele instelprocedure.
-const WIZARD_DEMO_CHORES = {
-  klusjes: { title: "Kamer opruimen", emoji: "🧹", reward: "€ 2,00" },
-  zakgeld: { title: "Auto wassen", emoji: "🚗", reward: "€ 3,00" },
-  schermtijd: { title: "Huiswerk maken", emoji: "📚", reward: "20 min schermtijd" },
-};
-
 function WelcomeWizard({ t, onComplete }) {
-  const [stage, setStage] = useState("welcome"); // "welcome" | "priority" | "demo" | "names"
-  const [priority, setPriority] = useState("klusjes");
-  const [demoDone, setDemoDone] = useState(false);
-  const [demoConfetti, setDemoConfetti] = useState(false);
-  const boomLocal = () => { setDemoConfetti(false); setTimeout(() => setDemoConfetti(true), 30); setTimeout(() => setDemoConfetti(false), 2200); };
   const [parentName, setParentName] = useState("");
   const [parentAvatar, setParentAvatar] = useState(PARENT_AVATARS[0]);
   const [kids, setKids] = useState([]); // [{name, avatar, age}]
@@ -3178,79 +3164,6 @@ function WelcomeWizard({ t, onComplete }) {
     });
     onComplete(members, balances, goals);
   };
-
-  if (stage === "welcome") {
-    return (
-      <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 28 }}>
-        <Text style={{ fontSize: 44, textAlign: "center", marginBottom: 16 }}>🏠</Text>
-        <Text style={{ fontSize: 30, fontWeight: "900", color: t.ink, textAlign: "center", letterSpacing: -1 }}>
-          Welkom bij Heit<Text style={{ color: t.accent }}>je</Text>!</Text>
-        <Text style={{ fontSize: 15, fontWeight: "700", color: t.accent, textAlign: "center", marginTop: 6 }}>
-          voor een karweitje</Text>
-        <Text style={{ fontSize: 19, fontWeight: "700", color: t.ink, textAlign: "center", lineHeight: 26, marginTop: 14, marginBottom: 26 }}>
-          Met klusjes je zakgeld verdienen op een leuke manier</Text>
-        <Btn t={t} onPress={() => setStage("priority")}>Aan de slag</Btn>
-      </ScrollView>
-    );
-  }
-
-  if (stage === "priority") {
-    const OPTIONS = [
-      { key: "klusjes", icon: "🧹", label: "Klusjes verdelen" },
-      { key: "zakgeld", icon: "🐷", label: "Zakgeld & sparen" },
-      { key: "schermtijd", icon: "⏱️", label: "Schermtijd verdienen" },
-    ];
-    return (
-      <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 28 }}>
-        <Text style={{ fontSize: 22, fontWeight: "900", color: t.ink, textAlign: "center", marginBottom: 8 }}>
-          Waar wil je dit gezin vooral mee helpen?</Text>
-        <Text style={{ fontSize: 13, color: t.sub, textAlign: "center", marginBottom: 24 }}>
-          Geen zorgen, alles zit sowieso in de app — dit bepaalt alleen het voorbeeld hierna.</Text>
-        <View style={{ gap: 10 }}>
-          {OPTIONS.map(o => (
-            <Card key={o.key} t={t} onPress={() => { setPriority(o.key); setStage("demo"); }}
-              style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
-              <Text style={{ fontSize: 26 }}>{o.icon}</Text>
-              <Text style={{ fontWeight: "800", fontSize: 16, color: t.ink, flex: 1 }}>{o.label}</Text>
-              <Text style={{ fontSize: 18, color: t.sub }}>›</Text>
-            </Card>
-          ))}
-        </View>
-      </ScrollView>
-    );
-  }
-
-  if (stage === "demo") {
-    const demo = WIZARD_DEMO_CHORES[priority];
-    return (
-      <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 28 }}>
-        <Text style={{ fontSize: 22, fontWeight: "900", color: t.ink, textAlign: "center", marginBottom: 6 }}>
-          Zo werkt het — probeer maar!</Text>
-        <Text style={{ fontSize: 13, color: t.sub, textAlign: "center", marginBottom: 22 }}>
-          Dit is maar een voorbeeld, jullie eigen gezin komt zo.</Text>
-        <Card t={t} style={{ marginBottom: 20 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <Text style={{ fontSize: 30 }}>{demo.emoji}</Text>
-            <Text style={{ fontWeight: "800", fontSize: 17, color: t.ink, flex: 1 }}>{demo.title}</Text>
-            <Text style={{ fontWeight: "900", fontSize: 16, color: t.accent }}>{demo.reward}</Text>
-          </View>
-          {!demoDone ? (
-            <View style={{ marginTop: 14 }}>
-              <Btn t={t} kind="success" onPress={() => { setDemoDone(true); boomLocal(); }}>✅ Klaar! Laat kijken</Btn>
-            </View>
-          ) : (
-            <View style={{ marginTop: 14, alignItems: "center" }}>
-              <Text style={{ fontSize: 34 }}>🎉</Text>
-              <Text style={{ fontWeight: "800", fontSize: 15, color: t.ink, textAlign: "center", marginTop: 4 }}>
-                Precies zo simpel is het! Papa of mama keurt dit soort klusjes straks met één tik goed.</Text>
-            </View>
-          )}
-        </Card>
-        {demoDone ? <Btn t={t} onPress={() => setStage("names")}>Verder naar mijn gezin →</Btn> : null}
-        <Confetti show={demoConfetti} />
-      </ScrollView>
-    );
-  }
 
   return (
     <ScrollView contentContainerStyle={{ padding: 24 }}>
