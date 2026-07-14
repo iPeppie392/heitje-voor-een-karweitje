@@ -2544,12 +2544,14 @@ function Sheet({ t, visible, onClose, title, children }) {
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={{ flex: 1, backgroundColor: "rgba(10,5,25,0.55)", justifyContent: "flex-end" }}>
-        <View style={{ backgroundColor: t.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 }}>
-          <Text style={{ fontWeight: "800", fontSize: 17, color: t.ink, marginBottom: 14 }}>{title}</Text>
-          {children}
-          <TouchableOpacity onPress={onClose} style={{ alignItems: "center", padding: 12 }}>
-            <Text style={{ color: t.sub, fontWeight: "700" }}>Annuleren</Text>
-          </TouchableOpacity>
+        <View style={{ backgroundColor: t.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "88%" }}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 24 }}>
+            <Text style={{ fontWeight: "800", fontSize: 17, color: t.ink, marginBottom: 14 }}>{title}</Text>
+            {children}
+            <TouchableOpacity onPress={onClose} style={{ alignItems: "center", padding: 12 }}>
+              <Text style={{ color: t.sub, fontWeight: "700" }}>Annuleren</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </KeyboardAvoidingView>
     </Modal>
