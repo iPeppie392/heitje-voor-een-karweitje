@@ -62,7 +62,9 @@ export const DEFAULT_STATE = {
 
   // Fase 4 — uiterlijk & gevoel. Per toestel ingesteld, geldt voor het hele gezin op dat toestel.
   themeChoice: "paars",   // "paars" | "blauw" | "groen" | "amber" — zie src/theme.js THEMES
-  themeOverride: null,    // null = automatisch (systeeminstelling), of "light" | "dark"
+  // Standaard altijd donker starten, ongeacht systeeminstelling — een kind/ouder kan dit
+  // nog steeds zelf wijzigen naar Licht of Automatisch bij Instellingen.
+  themeOverride: "dark",  // null = automatisch (systeeminstelling), of "light" | "dark"
   radiusScale: 1,         // 0.7–1.3, instelbaar via slider ("afronding")
   textScale: 1,           // 0.9–1.15, instelbaar via slider ("tekstgrootte")
 

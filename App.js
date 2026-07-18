@@ -23,7 +23,7 @@ import { uid } from "./src/id";
 import { registerForPushToken, sendPushNotification } from "./src/notifications";
 import FamilySetup from "./src/screens/FamilySetup";
 
-const FREE_CHORE_LIMIT = 5; // free tier: max active chores (premium: unlimited)
+const FREE_CHORE_LIMIT = 1; // free tier: max active chores (premium: unlimited)
 const FREE_GOAL_LIMIT = 2;  // free tier: max spaardoelen per kind (premium: onbeperkt) — standaard "Speelgoed" + "Sparen"
 
 // Twee standaard spaardoelen die elk nieuw kind meteen krijgt: één gericht doel

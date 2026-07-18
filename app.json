@@ -4,7 +4,7 @@
     "slug": "heitje-voor-een-karweitje",
     "version": "0.2.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "icon": "./assets/icon.png",
     "primaryColor": "#7C3AED",
