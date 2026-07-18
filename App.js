@@ -151,6 +151,9 @@ export default function App() {
   const isDark = S.themeOverride ? S.themeOverride === "dark" : scheme === "dark";
   const t = buildTheme({ themeChoice: S.themeChoice, dark: isDark, radiusScale: S.radiusScale, textScale: S.textScale });
   const [me, setMe] = useState(null); // active profile on this device
+  const [pinPrompt, setPinPrompt] = useState(null); // { key, mode: "set"|"enter" } — pincode-gate vóór een ouderprofiel
+  const [pinValue, setPinValue] = useState("");
+  const [pinConfirm, setPinConfirm] = useState("");
   const [tab, setTab] = useState("feed");
   const [confetti, setConfetti] = useState(false);
   const [choreModal, setChoreModal] = useState(false);
@@ -160,6 +163,11 @@ export default function App() {
   const [timerInput, setTimerInput] = useState("");
   const [rejectFor, setRejectFor] = useState(null); // chore id being rejected
   const [familySetupOpen, setFamilySetupOpen] = useState(false);
+  // "Later, ga lokaal verder" op het gezin-aanmaken-scherm zette je terug op het
+  // "Wie ben jij?"-scherm, waar dezelfde verleidelijke "Gezin aanmaken of koppelen"-
+  // link meteen weer klaarstond — voelde als een lus zonder uitweg. Na één keer
+  // "later" kiezen verbergen we die link voor de rest van deze sessie.
+  const [familySetupDismissed, setFamilySetupDismissed] = useState(false);
   const [inviteCode, setInviteCode] = useState(null);
   const [guestInviteCode, setGuestInviteCode] = useState(null);
   const [hostInviteCode, setHostInviteCode] = useState(null);
@@ -247,8 +255,88 @@ export default function App() {
     }
   }, [me, S.feed]);
 
-  // Profiel kiezen op de inlogpagina — onthoudt de keuze voor de volgende keer
-  const pick = (k) => { setMe(k); patch({ lastMe: k }); };
+  // Profiel kiezen op de inlogpagina — onthoudt de keuze voor de volgende keer.
+  // Een ouderprofiel zit achter een pincode: zonder dit kon een kind met één tik
+  // naar het ouderprofiel wisselen en zelf klusjes/spaardoelen goedkeuren — dat
+  // ondermijnt de hele "ouderlijke goedkeuring"-belofte van de app. Eerste keer
+  // dat een ouderprofiel gekozen wordt wordt de pincode ingesteld i.p.v. gevraagd.
+  const pick = (k) => {
+    const m = S.members[k];
+    if (m?.role === "ouder") {
+      setPinPrompt({ key: k, mode: S.parentPin ? "enter" : "set" });
+      return;
+    }
+    setMe(k); patch({ lastMe: k });
+  };
+
+  // Afhandeling van de pincode-modal: instellen (eerste keer) of controleren.
+  const closePinPrompt = () => { setPinPrompt(null); setPinValue(""); setPinConfirm(""); };
+  const submitPin = () => {
+    if (!pinPrompt) return;
+    if (pinPrompt.mode === "set") {
+      if (pinValue.length !== 4) { alertX("Kies 4 cijfers", "Vul een pincode van precies 4 cijfers in."); return; }
+      if (pinValue !== pinConfirm) { alertX("Pincodes komen niet overeen", "Typ dezelfde 4 cijfers nog een keer."); setPinConfirm(""); return; }
+      const k = pinPrompt.key;
+      patch({ parentPin: pinValue });
+      closePinPrompt();
+      setMe(k); patch({ lastMe: k });
+    } else {
+      if (pinValue !== S.parentPin) { alertX("Onjuiste pincode", "Probeer het opnieuw."); setPinValue(""); return; }
+      const k = pinPrompt.key;
+      closePinPrompt();
+      setMe(k); patch({ lastMe: k });
+    }
+  };
+
+  // Eén gedeelde modal-JSX (i.p.v. 'm dubbel te definiëren) — gebruikt zowel op het
+  // "Wie ben jij?"-scherm (voor !me) als vanuit Instellingen (pincode wijzigen, als
+  // ouder al ingelogd is), dus buiten beide early-returns gedefinieerd.
+  const pinGateModal = (
+    <Modal visible={!!pinPrompt} transparent animationType="fade" onRequestClose={closePinPrompt}>
+      <View style={{ flex: 1, backgroundColor: "rgba(10,5,25,0.55)", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <View style={{ backgroundColor: t.card, borderRadius: 24, padding: 24, width: "100%", maxWidth: 340 }}>
+          <Text style={{ fontSize: 36, textAlign: "center", marginBottom: 8 }}>🔒</Text>
+          <Text style={{ fontWeight: "900", fontSize: 18, color: t.ink, textAlign: "center", marginBottom: 6 }}>
+            {pinPrompt?.mode === "set" ? "Stel een pincode in" : "Voer de pincode in"}
+          </Text>
+          <Text style={{ fontSize: 13, color: t.sub, textAlign: "center", marginBottom: 16 }}>
+            {pinPrompt?.mode === "set"
+              ? "Kies een pincode van 4 cijfers om het ouderprofiel te beveiligen — zonder deze code kan een kind niet zelf als ouder inloggen."
+              : "Deze pincode is nodig om als ouder in te loggen."}
+          </Text>
+          <TextInput
+            value={pinValue}
+            onChangeText={(v) => setPinValue(v.replace(/[^0-9]/g, "").slice(0, 4))}
+            keyboardType="number-pad"
+            secureTextEntry
+            maxLength={4}
+            placeholder="••••"
+            placeholderTextColor={t.sub}
+            autoFocus
+            style={[inputStyle(t), { textAlign: "center", fontSize: 24, letterSpacing: 8 }]}
+          />
+          {pinPrompt?.mode === "set" && (
+            <TextInput
+              value={pinConfirm}
+              onChangeText={(v) => setPinConfirm(v.replace(/[^0-9]/g, "").slice(0, 4))}
+              keyboardType="number-pad"
+              secureTextEntry
+              maxLength={4}
+              placeholder="Nogmaals ••••"
+              placeholderTextColor={t.sub}
+              style={[inputStyle(t), { textAlign: "center", fontSize: 24, letterSpacing: 8, marginTop: 10 }]}
+            />
+          )}
+          <View style={{ marginTop: 16 }}>
+            <Btn t={t} onPress={submitPin}>{pinPrompt?.mode === "set" ? "Pincode instellen" : "Inloggen"}</Btn>
+          </View>
+          <TouchableOpacity onPress={closePinPrompt} style={{ alignItems: "center", padding: 12 }}>
+            <Text style={{ color: t.sub, fontWeight: "700", fontSize: 13 }}>Annuleren</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
 
   const fmt = (c) => fmt0(c, S.cur);
   const fmtMin = (m) => `${m} min`;
@@ -327,7 +415,12 @@ export default function App() {
   // Nieuw kind lokaal toevoegen (en meesynchroniseren als er al een gezin-account is).
   // Krijgt meteen 2 standaard spaardoelen (Speelgoed + Sparen, zie defaultGoals())
   // — zonder dat zou de sparen-keuze bij een afgerond klusje geen echte optie hebben.
+  // Twee profielen met exact dezelfde naam zijn op het "Wie ben jij?"-scherm
+  // amper te onderscheiden (alleen een klein rol-label) — dat voorkomen we hier.
+  const nameTaken = (name) => Object.values(S.members).some(m => m.name.trim().toLowerCase() === name.trim().toLowerCase());
+
   const addKid = (kid) => {
+    if (nameTaken(kid.name)) { alertX("Naam al in gebruik", `Er is al iemand in dit gezin die ${kid.name} heet. Kies een andere naam (bijv. met achternaam of bijnaam).`); return; }
     const key = uid();
     const goals = defaultGoals();
     setS(s => ({ ...s, members: { ...s.members, [key]: kid }, balances: { ...s.balances, [key]: 0 }, goals: { ...s.goals, [key]: goals } }));
@@ -348,6 +441,7 @@ export default function App() {
   // Extra ouder lokaal toevoegen (geen eigen inlog-account — dat is alleen nodig als
   // deze ouder ook op een ánder toestel wil inloggen, via Gezin delen/QR).
   const addParent = (parent) => {
+    if (nameTaken(parent.name)) { alertX("Naam al in gebruik", `Er is al iemand in dit gezin die ${parent.name} heet. Kies een andere naam.`); return; }
     const key = uid();
     setS(s => ({ ...s, members: { ...s.members, [key]: parent }, balances: { ...s.balances, [key]: 0 } }));
     setParentModal(false);
@@ -695,6 +789,15 @@ export default function App() {
     const isKid = S.members[c.by]?.role === "kind";
     if (isKid) {
       setChore(c.id, { status: "approved" });
+      // Direct bijschrijven op het vrije saldo — dit is de kernbelofte "zakgeld
+      // wordt automatisch bijgehouden". Het kind kan het geld hierna nog naar een
+      // spaardoel verplaatsen (zie allocate()), maar dat mag het bijschrijven zelf
+      // niet blokkeren: anders blijft "Gezinssaldo"/"Samen gespaard" op €0,00 staan
+      // totdat het kind toevallig zelf inlogt en kiest.
+      setS(s => ({ ...s, balances: { ...s.balances, [c.by]: (s.balances[c.by] || 0) + c.cents } }));
+      if (S.familyId && fam.backendConfigured) {
+        push.addLedgerEntry(S.familyId, { member_id: c.by, cents: c.cents, kind: "chore_reward", chore_id: c.id });
+      }
       const kid = S.members[c.by];
       if (kid?.push_token) {
         sendPushNotification(kid.push_token, "Goedgekeurd! 🎉",
@@ -749,10 +852,11 @@ export default function App() {
       const g = isNew ? { id: uid(), name: "Speelgoed", emoji: "🎁", imageUri: null, target: 1500, saved: 0, link: "", approved: true } : kidGoals[idx];
       const newSaved = g.saved + cents;
       const newGoals = isNew ? [...kidGoals, { ...g, saved: newSaved }] : kidGoals.map((x, i) => i === idx ? { ...x, saved: newSaved } : x);
-      setS(s => ({ ...s, goals: { ...s.goals, [kid]: newGoals }, chores: s.chores.filter(x => x.id !== choreId) }));
+      // Het bedrag staat sinds approve() al op het vrije saldo — hier verhuist het
+      // alleen naar het spaardoel (saldo omlaag, goal.saved omhoog), er komt geen
+      // nieuw geld bij.
+      setS(s => ({ ...s, goals: { ...s.goals, [kid]: newGoals }, balances: { ...s.balances, [kid]: s.balances[kid] - cents }, chores: s.chores.filter(x => x.id !== choreId) }));
       addFeed({ who: kid, badge: `🐷 ${fmt(cents)} gespaard voor ${g.name}` });
-      // Naar een spaardoel: alleen goals.saved bijwerken, geen ledger-entry — die tabel
-      // is puur de kasstroom, saldo in een spaardoel is daar bewust los van.
       if (S.familyId && fam.backendConfigured) {
         if (isNew) {
           push.upsertGoal(S.familyId, kid, {
@@ -760,6 +864,9 @@ export default function App() {
             target: g.target, saved: newSaved, link: g.link, approved: g.approved,
           });
         } else if (g.id) push.updateGoal(g.id, { saved: newSaved });
+        // Tegenboeking van de chore_reward-entry die approve() al aanmaakte — het geld
+        // verlaat het vrije saldo en gaat naar het spaardoel (dat los van de ledger wordt bijgehouden).
+        push.addLedgerEntry(S.familyId, { member_id: kid, cents: -cents, kind: "manual_adjustment", chore_id: choreId });
         push.updateChore(choreId, { allocated: true });
       }
       if (newSaved >= g.target) {
@@ -769,10 +876,11 @@ export default function App() {
         maybeAskForReview();
       }
     } else {
-      setS(s => ({ ...s, balances: { ...s.balances, [kid]: s.balances[kid] + cents }, chores: s.chores.filter(x => x.id !== choreId) }));
+      // Geld staat al op het vrije saldo sinds approve() — hier alleen het klusje
+      // als afgehandeld markeren, geen tweede keer bijschrijven.
+      setS(s => ({ ...s, chores: s.chores.filter(x => x.id !== choreId) }));
       addFeed({ who: kid, badge: `💶 ${fmt(cents)} gespaard (vrij saldo)` });
       if (S.familyId && fam.backendConfigured) {
-        push.addLedgerEntry(S.familyId, { member_id: kid, cents, kind: "chore_reward", chore_id: choreId });
         push.updateChore(choreId, { allocated: true });
       }
     }
@@ -929,17 +1037,6 @@ export default function App() {
   // ----- Profile picker (first launch / switch) -----
   if (!loaded) return <View style={{ flex: 1, backgroundColor: light.bg }} />;
 
-  // Allereerste pagina, vóór alles anders: eerlijke uitleg over kosten en reclame. Eenmalig
-  // per toestel (net als de rondleiding), maar via Instellingen altijd opnieuw te bekijken.
-  if (!S.pricingSeen || pricingForced) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
-        <StatusBar style={isDark ? "light" : "dark"} />
-        <PricingIntro t={t} onContinue={() => { patch({ pricingSeen: true }); setPricingForced(false); }} />
-      </SafeAreaView>
-    );
-  }
-
   // Zolang de gezinsleden nog exact de ongewijzigde demo-set zijn (Emma/Daan/Vader/Moeder),
   // is er verplicht eerst een echte ouder aan te maken — ongeacht lastMe/setupDone, want
   // anders blijven mensen voor altijd met demo-namen zitten. De wizard vervangt de demo-set
@@ -968,7 +1065,8 @@ export default function App() {
       return (
         <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
           <StatusBar style={isDark ? "light" : "dark"} />
-          <FamilySetup t={t} jr={false} fam={fam} localState={S} onDone={onFamilySetupDone} onCancel={() => setFamilySetupOpen(false)} />
+          <FamilySetup t={t} jr={false} fam={fam} localState={S} onDone={onFamilySetupDone}
+            onCancel={() => { setFamilySetupOpen(false); setFamilySetupDismissed(true); }} />
         </SafeAreaView>
       );
     }
@@ -995,7 +1093,7 @@ export default function App() {
               <Text style={{ fontSize: 20, color: t.sub }}>›</Text>
             </TouchableOpacity>
           ))}
-          {fam.backendConfigured && !S.familyId ? (
+          {fam.backendConfigured && !S.familyId && !familySetupDismissed ? (
             <TouchableOpacity onPress={() => setFamilySetupOpen(true)} style={{ marginTop: 8, alignItems: "center" }}>
               <Text style={{ color: t.accent, fontWeight: "800", fontSize: 13.5 }}>
                 👨‍👩‍👧‍👦 Gezin aanmaken of koppelen met een code</Text>
@@ -1010,6 +1108,20 @@ export default function App() {
             </TouchableOpacity>
           </View>
         </ScrollView>
+        {pinGateModal}
+      </SafeAreaView>
+    );
+  }
+
+  // Eerlijke uitleg over kosten en reclame — alleen relevant voor een ouder (kinderen
+  // hebben nooit reclame of kosten, zie PricingIntro zelf), dus pas hier tonen i.p.v.
+  // vóór de profielkiezer. Zo begint een kind altijd meteen met "Wie ben jij?" i.p.v.
+  // met een scherm over abonnementen. Eenmalig per toestel, via Instellingen opnieuw te bekijken.
+  if (role === "ouder" && (!S.pricingSeen || pricingForced)) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+        <StatusBar style={isDark ? "light" : "dark"} />
+        <PricingIntro t={t} onContinue={() => { patch({ pricingSeen: true }); setPricingForced(false); }} />
       </SafeAreaView>
     );
   }
@@ -1360,6 +1472,7 @@ export default function App() {
         <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
           {role === "kind" ? (
             <TouchableOpacity onPress={() => setAvatarPickerOpen(true)}
+              accessibilityRole="button" accessibilityLabel="Avatar wijzigen"
               style={{ width: 52, height: 52, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.22)", alignItems: "center", justifyContent: "center" }}>
               <Text style={{ fontSize: 28 }}>{M.avatar}</Text></TouchableOpacity>
           ) : (
@@ -1632,7 +1745,14 @@ export default function App() {
       <Text style={{ fontWeight: "800", fontSize: 13, color: t.sub, letterSpacing: 1, marginVertical: 10 }}>
         {role === "kind" ? (jr ? "KLUSJES — PAK ZE! 🙌" : "OPEN POOL — CLAIM ZE SNEL")
           : S.premiumUnlocked ? `IN DE POOL (${active.length}, onbeperkt ✨)` : `IN DE POOL (${active.length}/${FREE_CHORE_LIMIT} gratis)`}</Text>
-      {S.chores.filter(c => (c.status !== "waiting" || role === "kind") && c.status !== "approved").map(c => <ChoreCard key={c.id} c={c} />)}
+      {(() => {
+        const poolChores = S.chores.filter(c => (c.status !== "waiting" || role === "kind") && c.status !== "approved");
+        return poolChores.length ? poolChores.map(c => <ChoreCard key={c.id} c={c} />) : (
+          <Text style={{ fontSize: 13, color: t.sub, marginBottom: 12 }}>
+            {role === "kind" ? "Nog geen klusjes in de pool. Kom later terug! 🧹" : "Nog geen klusjes. Voeg er hieronder eentje toe. 🧹"}
+          </Text>
+        );
+      })()}
       {role === "ouder" ? (
         <Btn t={t} kind="ghost" onPress={() => {
           if (!S.premiumUnlocked && active.length >= FREE_CHORE_LIMIT) {
@@ -1726,7 +1846,7 @@ export default function App() {
         </>
       )}
       <Text style={{ fontSize: 12, color: t.sub, paddingVertical: 12 }}>
-        Nieuw doel: kies een foto en doelbedrag. Papa of mama keurt het doel eerst goed — pas dan gaat de winkellink open (parental gate).</Text>
+        Nieuw doel: kies een foto en doelbedrag. Papa of mama keurt het doel eerst goed — pas dan gaat de winkellink open.</Text>
     </>
   );
 
@@ -1828,7 +1948,8 @@ export default function App() {
                   <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{m.name}{k === me ? " · jij" : ""}</Text>
                   <Text style={{ fontSize: 12, color: t.sub }}>Ouder</Text>
                 </View>
-                <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}>
+                <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}
+                  accessibilityRole="button" accessibilityLabel={`${m.name} verwijderen`}>
                   <Text style={{ color: t.danger, fontWeight: "800", fontSize: 13 }}>✕</Text>
                 </TouchableOpacity>
               </View>
@@ -1856,7 +1977,8 @@ export default function App() {
                     <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{m.name}</Text>
                     <Text style={{ fontSize: 12, color: t.sub }}>Gast</Text>
                   </View>
-                  <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}>
+                  <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}
+                    accessibilityRole="button" accessibilityLabel={`${m.name} verwijderen`}>
                     <Text style={{ color: t.danger, fontWeight: "800", fontSize: 13 }}>✕</Text>
                   </TouchableOpacity>
                 </View>
@@ -1905,7 +2027,8 @@ export default function App() {
                     <Text style={{ fontWeight: "700", fontSize: 15, color: t.ink }}>{m.name}</Text>
                     <Text style={{ fontSize: 12, color: t.sub }}>Host · voor {S.members[m.hostChildId]?.name || "?"}</Text>
                   </View>
-                  <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}>
+                  <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}
+                    accessibilityRole="button" accessibilityLabel={`${m.name} verwijderen`}>
                     <Text style={{ color: t.danger, fontWeight: "800", fontSize: 13 }}>✕</Text>
                   </TouchableOpacity>
                 </View>
@@ -1961,7 +2084,8 @@ export default function App() {
               </View>
               <Amount t={t} size={24}>{fmt(v)}</Amount>
               {role === "ouder" ? (
-                <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}>
+                <TouchableOpacity onPress={() => removeMember(k)} style={{ padding: 6 }}
+                  accessibilityRole="button" accessibilityLabel={`${m.name} verwijderen`}>
                   <Text style={{ color: t.danger, fontWeight: "800", fontSize: 13 }}>✕</Text>
                 </TouchableOpacity>
               ) : null}
@@ -2031,19 +2155,24 @@ export default function App() {
       ) : null}
 
       <Card t={t}>
-        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 8 }}>⚙️ Testversie</Text>
-        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
-          Data staat lokaal op dit toestel (nog geen synchronisatie tussen telefoons — dat komt met de Supabase-backend).
-          Weergave per kind: junior (motivatiebalk) onder 12, tiener (ring met %) vanaf 12 — automatisch via leeftijd.</Text>
-        <Text style={{ fontSize: 11.5, color: t.sub, marginBottom: 10, lineHeight: 16 }}>
-          ⚠️ Disclaimer: testversie, "as-is", zonder garanties. Bedragen zijn geen echt geld — de app verwerkt geen
-          betalingen. Uitbetalen en aankopen doet de ouder zelf. Gebruik op eigen risico. Zie de voorwaarden.</Text>
-        <Btn t={t} small kind="danger" onPress={() =>
-          alertX("Demo resetten", "Alle lokale data wissen?", [
-            { text: "Annuleren", style: "cancel" },
-            { text: "Wissen", style: "destructive", onPress: async () => { await resetState(); setS(DEFAULT_STATE); setMe(null); } },
-          ])}>Demo-data resetten</Btn>
-        <View style={{ flexDirection: "row", gap: 18, marginTop: 14 }}>
+        {role === "ouder" && (
+          <>
+            <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 8 }}>⚙️ Testversie</Text>
+            <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+              Zonder gezin-account staat data lokaal op dit toestel. Met een gezin-account (zie "Gezin delen" hierboven)
+              synchroniseert alles via een beveiligde server. Weergave per kind: junior (motivatiebalk) onder 12, tiener
+              (ring met %) vanaf 12 — automatisch via leeftijd.</Text>
+            <Text style={{ fontSize: 11.5, color: t.sub, marginBottom: 10, lineHeight: 16 }}>
+              ⚠️ Disclaimer: testversie, "as-is", zonder garanties. Bedragen zijn geen echt geld — de app verwerkt geen
+              betalingen. Uitbetalen en aankopen doet de ouder zelf. Gebruik op eigen risico. Zie de voorwaarden.</Text>
+            <Btn t={t} small kind="danger" onPress={() =>
+              alertX("Demo resetten", "Alle lokale data wissen?", [
+                { text: "Annuleren", style: "cancel" },
+                { text: "Wissen", style: "destructive", onPress: async () => { await resetState(); setS(DEFAULT_STATE); setMe(null); } },
+              ])}>Demo-data resetten</Btn>
+          </>
+        )}
+        <View style={{ flexDirection: "row", gap: 18, marginTop: role === "ouder" ? 14 : 0 }}>
           <TouchableOpacity onPress={() => Linking.openURL(`${LEGAL_BASE}/privacy.html`)}>
             <Text style={{ color: t.accent, fontWeight: "700", fontSize: 13 }}>Privacybeleid ↗</Text>
           </TouchableOpacity>
@@ -2105,6 +2234,16 @@ export default function App() {
           <Btn t={t} small kind="ghost" onPress={() => { setTourStep(0); setTourForced(true); }}>Bekijk de rondleiding opnieuw</Btn>
         </View>
       </Card>
+
+      {role === "ouder" && (
+        <Card t={t} style={{ marginBottom: 12 }}>
+          <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>🔒 Pincode ouderprofiel</Text>
+          <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+            Deze pincode is nodig om als ouder in te loggen, zodat een kind niet zelf kan wisselen naar het ouderprofiel.</Text>
+          <Btn t={t} small kind="ghost" onPress={() => setPinPrompt({ key: me, mode: "set" })}>
+            {S.parentPin ? "Pincode wijzigen" : "Pincode instellen"}</Btn>
+        </Card>
+      )}
 
       <Card t={t} style={{ marginBottom: 12 }}>
         <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>💶 Reclame & kosten</Text>
@@ -2252,17 +2391,20 @@ export default function App() {
         {role === "ouder" && fam.backendConfigured && S.familyId ? (
           <TouchableOpacity onPress={() => setQuickShareOpen(true)} style={{ width: 34, height: 34,
             borderRadius: 999, backgroundColor: t.soft, borderWidth: 1, borderColor: t.line,
-            alignItems: "center", justifyContent: "center" }}>
+            alignItems: "center", justifyContent: "center" }}
+            accessibilityRole="button" accessibilityLabel="QR-code delen">
             <Text style={{ fontSize: 15 }}>🔲</Text>
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity onPress={() => setHelpOpen(true)} style={{ width: 34, height: 34,
           borderRadius: 999, backgroundColor: t.soft, borderWidth: 1, borderColor: t.line,
-          alignItems: "center", justifyContent: "center" }}>
+          alignItems: "center", justifyContent: "center" }}
+          accessibilityRole="button" accessibilityLabel="Hulp openen">
           <Text style={{ fontSize: 15, fontWeight: "900", color: t.accent }}>ⓘ</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setMe(null)} style={{ flexDirection: "row", alignItems: "center", gap: 6,
-          backgroundColor: t.soft, borderWidth: 1, borderColor: t.line, borderRadius: 999, paddingLeft: 8, paddingRight: 11, paddingVertical: 6 }}>
+          backgroundColor: t.soft, borderWidth: 1, borderColor: t.line, borderRadius: 999, paddingLeft: 8, paddingRight: 11, paddingVertical: 6 }}
+          accessibilityRole="button" accessibilityLabel="Van profiel wisselen">
           <Text style={{ fontSize: 18 }}>{M.avatar}</Text>
           <Text style={{ fontSize: 12.5, fontWeight: "800", color: t.ink }}>{M.name} ▾</Text>
         </TouchableOpacity>
@@ -2297,6 +2439,7 @@ export default function App() {
         paddingTop: 10, paddingBottom: 10 }}>
         {visibleTabs.map(x => (
           <TouchableOpacity key={x.id} onPress={() => setTab(x.id)} hitSlop={{ top: 6, bottom: 6 }}
+            accessibilityRole="tab" accessibilityLabel={x.label} accessibilityState={{ selected: tab === x.id }}
             style={{ flex: 1, alignItems: "center", gap: 3, paddingVertical: 4, minHeight: 52,
               backgroundColor: tab === x.id ? t.soft : "transparent", borderRadius: 14, marginHorizontal: 3 }}>
             <Text style={{ fontSize: 23 }}>{x.icon}</Text>
@@ -2534,6 +2677,7 @@ export default function App() {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+      {pinGateModal}
     </SafeAreaView>
   );
 }
@@ -3153,8 +3297,16 @@ function WelcomeWizard({ t, onComplete }) {
   const [kidAvatar, setKidAvatar] = useState(KID_AVATARS[0]);
   const [day, setDay] = useState(""); const [month, setMonth] = useState(""); const [year, setYear] = useState("");
 
+  // Twee profielen met exact dezelfde naam zijn op het "Wie ben jij?"-scherm amper
+  // te onderscheiden — dat voorkomen we hier al bij het invullen van het formulier.
+  const nameTaken = (name) => {
+    const n = name.trim().toLowerCase();
+    return n === parentName.trim().toLowerCase() || kids.some(k => k.name.trim().toLowerCase() === n);
+  };
+
   const addKidToList = () => {
     if (!kidName.trim()) { alertX("Vul een naam in voor dit kind"); return; }
+    if (nameTaken(kidName)) { alertX("Naam al in gebruik", `Er zit al iemand met de naam ${kidName.trim()} in het lijstje. Kies een andere naam.`); return; }
     const age = computeAgeFromDate(day, month, year);
     if (age === null) { alertX("Geboortedatum onjuist", "Vul een geldige geboortedatum in (0–17 jaar)."); return; }
     setKids(ks => [...ks, { name: kidName.trim(), avatar: kidAvatar, age }]);
@@ -3163,11 +3315,25 @@ function WelcomeWizard({ t, onComplete }) {
 
   const finish = () => {
     if (!parentName.trim()) { alertX("Vul jouw naam in"); return; }
+    // Een kind kan al ingevuld staan (naam + geboortedatum) zonder dat op
+    // "+ Kind toevoegen aan lijst" is getikt — dat veld hier stilzwijgend laten
+    // vallen voelt als "mijn invoer is weg". In plaats daarvan het kind alsnog
+    // meenemen, of duidelijk maken wat er nog mist.
+    let finalKids = kids;
+    if (kidName.trim()) {
+      if (nameTaken(kidName)) { alertX("Naam al in gebruik", `Er zit al iemand met de naam ${kidName.trim()} in het lijstje. Kies een andere naam.`); return; }
+      const age = computeAgeFromDate(day, month, year);
+      if (age === null) {
+        alertX("Geboortedatum onjuist", `Vul een geldige geboortedatum in voor ${kidName.trim()}, of tik eerst op "+ Kind toevoegen aan lijst".`);
+        return;
+      }
+      finalKids = [...kids, { name: kidName.trim(), avatar: kidAvatar, age }];
+    }
     const members = {}; const balances = {}; const goals = {};
     const parentKey = uid();
     members[parentKey] = { name: parentName.trim(), avatar: parentAvatar, age: null, role: "ouder", streak: 0, color: "#7C3AED" };
     balances[parentKey] = 0;
-    kids.forEach((k, i) => {
+    finalKids.forEach((k, i) => {
       const key = uid();
       members[key] = { name: k.name, avatar: k.avatar, age: k.age, role: "kind", streak: 0, color: KID_COLORS[i % KID_COLORS.length] };
       balances[key] = 0;
@@ -3177,7 +3343,7 @@ function WelcomeWizard({ t, onComplete }) {
   };
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 24 }}>
+    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 24 }}>
       <Text style={{ fontSize: 22, fontWeight: "900", color: t.ink, marginBottom: 6 }}>Wie zit er in het gezin?</Text>
       <Text style={{ fontSize: 13, color: t.sub, marginBottom: 18 }}>Vul jullie echte namen in — je kan later altijd nog iemand toevoegen.</Text>
 

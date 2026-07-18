@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { View, Text, TouchableOpacity, Pressable, Image, Animated, Dimensions } from "react-native";
+import { View, Text, TouchableOpacity, Pressable, Image, Animated, Dimensions, StyleSheet } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import * as Haptics from "expo-haptics";
 import { createAudioPlayer } from "expo-audio";
@@ -24,19 +24,34 @@ try {
 // runtime-conditie). Zie src/AdSlot.js / src/AdSlot.web.js.
 export { AdSlot } from "./AdSlot";
 
-export const Card = ({ t, children, style, onPress }) => {
+// Layout-props die een ouder (bv. een flex-row van tegels naast elkaar) nodig heeft om
+// deze Card goed te laten meedelen in de ruimte — die moeten op de buitenste
+// TouchableOpacity staan, niet (alleen) op de binnenste View. Zonder dit kreeg alleen de
+// ene Tile zónder onPress (bv. de Streak-tegel) de flex:1 van zijn ouder, en werd hij
+// door zijn twee wél-aanklikbare buren samengeknepen op smalle schermen.
+const LAYOUT_KEYS = ["flex", "flexGrow", "flexShrink", "flexBasis", "minWidth", "maxWidth", "width",
+  "alignSelf", "margin", "marginTop", "marginBottom", "marginLeft", "marginRight", "marginHorizontal", "marginVertical"];
+
+export const Card = ({ t, children, style, onPress, accessibilityLabel }) => {
   const inner = (
     <View style={[{ backgroundColor: t.card, borderRadius: t.radius ?? 20, padding: 16, borderWidth: 1,
       borderColor: t.line }, style]}>{children}</View>
   );
-  return onPress ? <TouchableOpacity activeOpacity={0.85} onPress={onPress}>{inner}</TouchableOpacity> : inner;
+  if (!onPress) return inner;
+  const flat = StyleSheet.flatten(style) || {};
+  const layoutStyle = {};
+  LAYOUT_KEYS.forEach(k => { if (flat[k] !== undefined) layoutStyle[k] = flat[k]; });
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={onPress} style={layoutStyle}
+      accessibilityRole="button" accessibilityLabel={accessibilityLabel}>{inner}</TouchableOpacity>
+  );
 };
 
 // Klein, subtiel drukgevoel op elke knop in de app: iets kleiner worden bij aanraken
 // (net genoeg om "aanraakbaar" te voelen, niet overdreven), een zachte trilling en een
 // heel kort tikje geluid. Faalt altijd stil (try/catch) — een knop mag nooit crashen
 // omdat een geluid of trilling niet beschikbaar is (bijv. op web).
-export const Btn = ({ t, children, onPress, kind = "primary", small, jr }) => {
+export const Btn = ({ t, children, onPress, kind = "primary", small, jr, accessibilityLabel }) => {
   const kinds = {
     primary: { backgroundColor: t.accent, color: "#fff" },
     ghost: { backgroundColor: t.soft, color: t.accent },
@@ -63,7 +78,8 @@ export const Btn = ({ t, children, onPress, kind = "primary", small, jr }) => {
   };
 
   return (
-    <Pressable onPress={handlePress} onPressIn={pressIn} onPressOut={pressOut}>
+    <Pressable onPress={handlePress} onPressIn={pressIn} onPressOut={pressOut}
+      accessibilityRole="button" accessibilityLabel={accessibilityLabel || (typeof children === "string" ? children : undefined)}>
       <Animated.View style={{ transform: [{ scale }],
         backgroundColor: k.backgroundColor, borderWidth: k.borderWidth || 0, borderColor: k.borderColor,
         borderRadius: 999, paddingVertical: jr ? 14 : small ? 9 : 12, paddingHorizontal: jr ? 22 : small ? 14 : 18,
