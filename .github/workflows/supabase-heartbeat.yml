@@ -1,0 +1,26 @@
+name: Supabase Heartbeat
+
+on:
+  schedule:
+    - cron: "9 4 */3 * *"
+  workflow_dispatch:
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase database
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -e
+          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 30 \
+            "${SUPABASE_URL}/rest/v1/chore_offers?limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+          echo "HTTP-status: ${code}"
+          case "${code}" in
+            2*|401|403) echo "Heartbeat OK — project actief";;
+            *) echo "Heartbeat faalde (status ${code}) — project mogelijk gepauzeerd."; exit 1;;
+          esac
