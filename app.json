@@ -2,7 +2,7 @@
   "expo": {
     "name": "Heitje voor een karweitje",
     "slug": "heitje-voor-een-karweitje",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "nl.heitje.karweitje",
-      "buildNumber": "3",
+      "buildNumber": "4",
       "infoPlist": {
         "NSCameraUsageDescription": "Heitje uses the camera for before/after photos of chores, or to scan a family invite code.",
         "NSPhotoLibraryUsageDescription": "Heitje uses your photo library for savings goal images."
@@ -24,7 +24,7 @@
     },
     "android": {
       "package": "nl.heitje.karweitje",
-      "versionCode": 3,
+      "versionCode": 4,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",

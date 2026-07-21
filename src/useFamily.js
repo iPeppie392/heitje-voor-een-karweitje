@@ -30,7 +30,7 @@ export function useFamily({ familyId, onCloudState }) {
     let cancelled = false;
     pullFamilyState(familyId).then((state) => { if (!cancelled) onCloudState(state); }).catch(() => {});
     unsubRef.current = subscribeFamilyRealtime(familyId, () => {
-      pullFamilyState(familyId).then((state) => { if (!cancelled) onCloudState(state); }).catch(() => {});
+      pullFamilyState(familyId).then((state) => { if (!cancelled) onCloudState(state); }).catch((e) => console.warn("Cloud-pull mislukt:", e?.message));
     });
     return () => { cancelled = true; unsubRef.current?.(); };
   }, [session, familyId]);
@@ -46,6 +46,13 @@ export function useFamily({ familyId, onCloudState }) {
   }, []);
 
   const signOut = useCallback(async () => { await supabase.auth.signOut(); }, []);
+
+  // Verwijdert een heel gezin (cascade ruimt alle gezins-tabellen). Alleen een ouder van
+  // dat gezin mag dit — gecheckt server-side in de RPC delete_family().
+  const deleteFamily = useCallback(async (familyId) => {
+    const { error } = await supabase.rpc("delete_family", { p_family_id: familyId });
+    if (error) throw error;
+  }, []);
 
   const createFamily = useCallback(async (familyName, currency, parentName, parentAvatar) => {
     const { data, error } = await supabase.rpc("create_family", {
@@ -82,5 +89,5 @@ export function useFamily({ familyId, onCloudState }) {
     return !!data; // true = ontgrendeld, false = code onbekend/verlopen/vol
   }, []);
 
-  return { backendConfigured, session, loading, signUp, signIn, signOut, createFamily, createInvite, redeemInvite, redeemPromoCode };
+  return { backendConfigured, session, loading, signUp, signIn, signOut, deleteFamily, createFamily, createInvite, redeemInvite, redeemPromoCode };
 }

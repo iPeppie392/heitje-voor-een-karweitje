@@ -76,8 +76,9 @@ export const DEFAULT_STATE = {
 };
 
 export async function loadState() {
+  let raw = null;
   try {
-    const raw = await AsyncStorage.getItem(KEY);
+    raw = await AsyncStorage.getItem(KEY);
     if (!raw) return DEFAULT_STATE;
     const state = { ...DEFAULT_STATE, ...JSON.parse(raw) };
     // Toestellen van vóór de meerdere-spaardoelen-update hadden `goals[kid]` als
@@ -92,7 +93,11 @@ export async function loadState() {
       state.goals[key] = arr.map(g => g.id ? g : { ...g, id: uid() });
     }
     return state;
-  } catch {
+  } catch (e) {
+    // Corrupte data niet stilletjes weggooien: bewaar een backup voordat we
+    // terugvallen op de demofamilie, zodat een echt gezin hersteld kan worden.
+    try { if (raw) await AsyncStorage.setItem(`${KEY}-corrupt-backup`, raw); } catch {}
+    console.warn("Corrupte opslag gedetecteerd, backup gemaakt:", e?.message);
     return DEFAULT_STATE;
   }
 }
@@ -100,8 +105,8 @@ export async function loadState() {
 export async function saveState(state) {
   try {
     await AsyncStorage.setItem(KEY, JSON.stringify(state));
-  } catch {
-    // best-effort persistence; ignore write errors in the test build
+  } catch (e) {
+    console.warn("Opslaan mislukt:", e?.message);
   }
 }
 

@@ -18,7 +18,7 @@ import Slider from "@react-native-community/slider";
 import { loadState, saveState, resetState, DEFAULT_STATE, DEFAULT_MEMBERS } from "./src/store";
 import { Card, Btn, Chip, Amount, PhotoBox, Ring, JuniorBar, Confetti, AdSlot } from "./src/components";
 import { useFamily } from "./src/useFamily";
-import { push, pullFamilyState } from "./src/sync";
+import { push, pullFamilyState, flushPendingWrites, clearPendingWrites } from "./src/sync";
 import { uid } from "./src/id";
 import { registerForPushToken, sendPushNotification } from "./src/notifications";
 import FamilySetup from "./src/screens/FamilySetup";
@@ -183,18 +183,26 @@ export default function App() {
   const [pricingForced, setPricingForced] = useState(false); // "Bekijk prijzen opnieuw" in Instellingen
   const [shortcutsSheet, setShortcutsSheet] = useState(false); // ✏️-knop bij SNELKOPPELINGEN op Home
   const scrollY = useRef(new Animated.Value(0)).current; // achtergrond-parallax op het hoofdscherm
+  // Optimistische saldo-delta's per lid die lokaal al zijn doorgevoerd maar in de cloud
+  // nog moeten landen. Beschermen een recente bijschrijving tegen overschrijven door een
+  // cloud-pull die vóór de bevestiging van de ledger-regel binnenkomt.
+  const pendingDeltas = useRef({});
+  // Sla een saldo-wijziging op die lokaal al is doorgevoerd maar in de cloud nog moet
+  // landen. Bij de volgende cloud-pull wordt deze delta bij de cloud-balances opgeteld,
+  // totdat de cloud de wijziging bevestigt (na de time-out vertrouwen we de cloud weer).
+  const addPendingDelta = (memberId, cents) => {
+    if (!memberId || !cents) return;
+    const pd = pendingDeltas.current;
+    const prev = pd[memberId];
+    pd[memberId] = { cents: (prev?.cents || 0) + cents, until: Date.now() + 15000 };
+  };
 
-  // Een apart demo-linkje (?demo=1, alleen gebruikt door de marketingsite) begint altijd
-  // vers — negeert/wist wat er eventueel al lokaal opgeslagen stond. De gewone app-URL
-  // (zonder dit param) blijft normaal gedrag houden: een echt gezin raakt hier nooit iets door kwijt.
+  // Bij opstarten altijd de opgeslagen staat laden. Op het web mag een URL-parameter
+  // (?demo=1) NOOIT lokale gegevens wissen — anders raakt een echt gezin alles kwijt
+  // door zo'n link te openen. Nieuwe bezoekers zonder opgeslagen data starten automatisch
+  // bij de demofamilie (loadState → DEFAULT_STATE).
   useEffect(() => {
-    const isDemoLink = Platform.OS === "web" && typeof window !== "undefined"
-      && new URLSearchParams(window.location.search).get("demo") === "1";
-    if (isDemoLink) {
-      resetState().then(() => { setS(DEFAULT_STATE); setLoaded(true); });
-    } else {
-      loadState().then(s => { setS(s); setLoaded(true); });
-    }
+    loadState().then(s => { setS(s); setLoaded(true); });
   }, []);
   useEffect(() => { if (loaded) saveState(S); }, [S, loaded]);
 
@@ -202,7 +210,24 @@ export default function App() {
   // de app 100% lokaal, precies zoals nu. Zie src/supabase.js / src/useFamily.js.
   const fam = useFamily({
     familyId: S.familyId,
-    onCloudState: (cloud) => setS(s => ({ ...s, ...cloud })),
+    onCloudState: (cloud) => setS(s => {
+      const merged = { ...s, ...cloud };
+      // Bescherm recente optimistic saldo-wijzigingen: een cloud-pull die vóór de
+      // bevestiging van de ledger-regel komt, zou het zojuist opgehoogde saldo anders
+      // meteen weer verlagen. Tel nog-geldige delta's bij de cloud-balances op en
+      // ruim verlopen delta's op.
+      const now = Date.now();
+      const pd = pendingDeltas.current;
+      const base = { ...(cloud.balances || s.balances) };
+      let changed = false;
+      for (const m of Object.keys(pd)) {
+        if (pd[m].until > now) {
+          if (base[m] !== undefined) { base[m] = (base[m] || 0) + pd[m].cents; changed = true; }
+        } else { delete pd[m]; changed = true; }
+      }
+      if (changed) merged.balances = base;
+      return merged;
+    }),
   });
   const onFamilySetupDone = async ({ familyId, memberId, didMigrate }) => {
     // Eerst de cloud-data ophalen en in S zetten, en pas dán me/lastMe wijzigen —
@@ -783,8 +808,7 @@ export default function App() {
   // pendingAlloc meer: dat veld synchroniseerde nooit naar de cloud, dus op een ander
   // toestel dan waar goedgekeurd werd, kwam het verdiende bedrag nergens terecht. Door
   // dit aan het klusje zelf te hangen (dat al wél synct) werkt de keuze op elk toestel.
-  const approve = (c) => {
-    boom();
+  const approve = async (c) => {
     addFeed({ who: c.by, title: c.title, cents: c.cents, beforeUri: c.beforeUri, afterUri: c.afterUri });
     const isKid = S.members[c.by]?.role === "kind";
     if (isKid) {
@@ -795,8 +819,10 @@ export default function App() {
       // niet blokkeren: anders blijft "Gezinssaldo"/"Samen gespaard" op €0,00 staan
       // totdat het kind toevallig zelf inlogt en kiest.
       setS(s => ({ ...s, balances: { ...s.balances, [c.by]: (s.balances[c.by] || 0) + c.cents } }));
+      addPendingDelta(c.by, c.cents); // beschermt dit bedrag tegen een te vroege cloud-pull
       if (S.familyId && fam.backendConfigured) {
         push.addLedgerEntry(S.familyId, { member_id: c.by, cents: c.cents, kind: "chore_reward", chore_id: c.id });
+        flushPendingWrites(); // direct achter de bijschrijving aan, zodat de cloud snel klopt
       }
       const kid = S.members[c.by];
       if (kid?.push_token) {
@@ -816,9 +842,11 @@ export default function App() {
       // Ouders verdienen normaal geen zakgeld (UI blokkeert dit al) — dit pad is
       // defensief, geen keuze-moment nodig, dus meteen als "allocated" afronden.
       setS(s => ({ ...s, chores: s.chores.filter(x => x.id !== c.id), balances: { ...s.balances, [c.by]: s.balances[c.by] + c.cents } }));
+      addPendingDelta(c.by, c.cents);
       if (S.familyId && fam.backendConfigured) {
         push.updateChore(c.id, { status: "approved", allocated: true });
         push.addLedgerEntry(S.familyId, { member_id: c.by, cents: c.cents, kind: "chore_reward", chore_id: c.id });
+        flushPendingWrites();
       }
     }
   };
@@ -843,6 +871,7 @@ export default function App() {
   // een kind écht geen enkel spaardoel heeft, bijv. via een oude/kapotte cloud-sync).
   const allocate = (goalId) => {
     if (!awaitingAllocation) return;
+    if (role === "kind") boom(); // kind viert het verdiende bedrag direct bij het kiezen van sparen/spaardoel
     const { id: choreId, by: kid, cents, title } = awaitingAllocation;
     const kidGoals = S.goals[kid] || [];
     const idx = goalId ? kidGoals.findIndex(x => x.id === goalId) : -1;
@@ -868,7 +897,9 @@ export default function App() {
         // verlaat het vrije saldo en gaat naar het spaardoel (dat los van de ledger wordt bijgehouden).
         push.addLedgerEntry(S.familyId, { member_id: kid, cents: -cents, kind: "manual_adjustment", chore_id: choreId });
         push.updateChore(choreId, { allocated: true });
+        flushPendingWrites();
       }
+      addPendingDelta(kid, -cents); // geld verhuist naar het spaardoel — beschermt tegen te vroege pull
       if (newSaved >= g.target) {
         boom();
         addFeed({ who: kid, badge: `🎉 SPAARDOEL BEREIKT: ${g.name}!` });
@@ -882,6 +913,7 @@ export default function App() {
       addFeed({ who: kid, badge: `💶 ${fmt(cents)} gespaard (vrij saldo)` });
       if (S.familyId && fam.backendConfigured) {
         push.updateChore(choreId, { allocated: true });
+        flushPendingWrites();
       }
     }
   };
@@ -1903,8 +1935,14 @@ export default function App() {
     const others = sorted.filter(h => h.memberId !== me);
     return (
       <>
-        <Btn t={t} kind="ghost" onPress={() => setHomeworkModal(true)}>＋ Huiswerk toevoegen</Btn>
-        <View style={{ height: 12 }} />
+        {role === "ouder" ? (
+          <>
+            <Btn t={t} kind="ghost" onPress={() => setHomeworkModal(true)}>＋ Huiswerk toevoegen</Btn>
+            <View style={{ height: 12 }} />
+          </>
+        ) : (
+          <Text style={{ fontSize: 12, color: t.sub, marginBottom: 12 }}>Vraag een ouder om huiswerk voor je toe te voegen. 📚</Text>
+        )}
         {role === "kind" ? (
           <>
             {mine.length ? mine.map(h => <HomeworkCard key={h.id} h={h} />) : (
@@ -2157,19 +2195,47 @@ export default function App() {
       <Card t={t}>
         {role === "ouder" && (
           <>
-            <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 8 }}>⚙️ Testversie</Text>
+            <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 8 }}>ℹ️ Over deze app</Text>
             <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
-              Zonder gezin-account staat data lokaal op dit toestel. Met een gezin-account (zie "Gezin delen" hierboven)
-              synchroniseert alles via een beveiligde server. Weergave per kind: junior (motivatiebalk) onder 12, tiener
-              (ring met %) vanaf 12 — automatisch via leeftijd.</Text>
+              Zonder gezin-account staan je gegevens veilig op dit toestel. Met een gezin-account (zie "Gezin delen"
+              hierboven) synchroniseer je tussen apparaten via een beveiligde server. Kinderen onder 12 zien een
+              motivatiebalk, vanaf 12 een ring met percentage.</Text>
             <Text style={{ fontSize: 11.5, color: t.sub, marginBottom: 10, lineHeight: 16 }}>
-              ⚠️ Disclaimer: testversie, "as-is", zonder garanties. Bedragen zijn geen echt geld — de app verwerkt geen
-              betalingen. Uitbetalen en aankopen doet de ouder zelf. Gebruik op eigen risico. Zie de voorwaarden.</Text>
+              Deze app verwerkt géén echte betalingen. Bedragen zijn alleen boekhouding: uitbetalen doe je als ouder
+              zelf, buiten de app om. Zie de voorwaarden.</Text>
+            <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginTop: 14, marginBottom: 8 }}>🗑 Gegevens wissen</Text>
             <Btn t={t} small kind="danger" onPress={() =>
-              alertX("Demo resetten", "Alle lokale data wissen?", [
+              alertX("Reset dit apparaat", "Alle gegevens op dit apparaat wissen en opnieuw beginnen? De cloud-data van het gezin blijft bewaard voor andere apparaten.", [
                 { text: "Annuleren", style: "cancel" },
-                { text: "Wissen", style: "destructive", onPress: async () => { await resetState(); setS(DEFAULT_STATE); setMe(null); } },
-              ])}>Demo-data resetten</Btn>
+                { text: "Resetten", style: "destructive", onPress: async () => {
+                  await resetState();
+                  await clearPendingWrites();
+                  setMe(null);
+                  setS({ ...DEFAULT_STATE, familyId: null, cloudMemberId: null, lastMe: null, migrated: false });
+                } },
+              ])}>Reset dit apparaat</Btn>
+            <View style={{ height: 8 }} />
+            {S.familyId ? (
+              <Btn t={t} small kind="danger" onPress={() =>
+                alertX("Heel gezin wissen", "LET OP: hiermee verwijder je alle gegevens van het HELE gezin, ook in de cloud, voor iedereen op elk apparaat. Dit kan niet ongedaan worden gemaakt.", [
+                  { text: "Annuleren", style: "cancel" },
+                  { text: "Alles wissen", style: "destructive", onPress: async () => {
+                    try {
+                      if (S.familyId && fam.backendConfigured) {
+                        await fam.deleteFamily(S.familyId);
+                        await fam.signOut();
+                      }
+                    } catch (e) {
+                      console.warn("Cloud-wissen mislukt:", e?.message);
+                      alertX("Cloud-wissen (deels) mislukt", "De lokale gegevens zijn gewist. De cloud-data kon niet volledig worden verwijderd — probeer het later opnieuw.");
+                    }
+                    await resetState();
+                    await clearPendingWrites();
+                    setMe(null);
+                    setS({ ...DEFAULT_STATE, familyId: null, cloudMemberId: null, lastMe: null, migrated: false });
+                  } },
+                ])}>Heel gezin wissen (cloud)</Btn>
+            ) : null}
           </>
         )}
         <View style={{ flexDirection: "row", gap: 18, marginTop: role === "ouder" ? 14 : 0 }}>
@@ -2372,7 +2438,7 @@ export default function App() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
       <StatusBar style={isDark ? "light" : "dark"} />
-      <Confetti show={confetti} />
+      <Confetti show={confetti && role === "kind"} />
 
       <Animated.Image source={isDark ? BG_DARK : BG_LIGHT} resizeMode="cover" pointerEvents="none"
         style={{ position: "absolute", top: 0, left: 0, right: 0, width: "100%", height: winH * 1.5,
@@ -3002,6 +3068,7 @@ function AddHomeworkModal({ t, visible, onClose, onAdd, role, me, kids, members,
     if (role === "ouder" && (!forKid || !kids.includes(forKid))) setForKid(kids[0] || null);
   }, [kids.join(",")]);
   const submit = () => {
+    if (role !== "ouder") { alertX("Niet toegestaan", "Alleen een ouder kan huiswerk toevoegen."); return; }
     if (role === "ouder" && kids.length === 0) { alertX("Nog geen kinderen in het gezin", "Voeg eerst een kind toe bij Gezin, dan kun je huiswerk toewijzen."); return; }
     if (!title.trim()) { alertX("Vul een titel in"); return; }
     const memberId = role === "ouder" ? forKid : me;

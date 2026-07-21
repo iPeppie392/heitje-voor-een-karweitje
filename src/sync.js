@@ -223,3 +223,9 @@ export async function flushPendingWrites() {
   }
   await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
 }
+
+// Wis de hele pending-write-wachtrij — gebruikt bij een reset, zodat er geen achterhaalde
+// schrijfacties meer naar de cloud worden geflushed nadat de lokale data is gewist.
+export async function clearPendingWrites() {
+  try { await AsyncStorage.removeItem(QUEUE_KEY); } catch (e) { console.warn("Wissen queue mislukt:", e?.message); }
+}
