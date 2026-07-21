@@ -2508,6 +2508,14 @@ export default function App() {
         )}
       </Card>
 
+      <Card t={t} style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>📖 Uitgebreide uitleg</Text>
+        <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
+          Liever alles stap voor stap met afbeeldingen? Bekijk de online uitleg-gids op de website.</Text>
+        <Btn t={t} small kind="ghost" onPress={() => Linking.openURL("https://heitjevooreenkarweitje.eu/uitleg.html")}>
+          📖 Open de uitleg-gids</Btn>
+      </Card>
+
       <Card t={t}>
         <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>📮 Feedback & contact</Text>
         <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
