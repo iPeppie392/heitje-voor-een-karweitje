@@ -1,7 +1,7 @@
 # Compliance-overzicht — Google "Designed for Families" & Apple
 
 Bijgehouden logboek voor het Data-veiligheid-formulier in Google Play Console en het
-App Privacy-formulier in App Store Connect. Laatst bijgewerkt: 2026-07-10.
+App Privacy-formulier in App Store Connect. Laatst bijgewerkt: 2026-07-21.
 
 ## 1. Welke data verzamelen we, en van wie?
 
@@ -20,7 +20,9 @@ App Privacy-formulier in App Store Connect. Laatst bijgewerkt: 2026-07-10.
 
 Geen. Geen enkel dataveld wordt verkocht of gedeeld met derde partijen. Foto's en gegevens blijven binnen het eigen gezin (afgedwongen via Row Level Security op `family_id`, zie `sql/001_init.sql`).
 
-Toekomstige uitzondering (nog niet actief): een AdMob-gecertificeerd "Designed for Families"-advertentienetwerk, alleen zichtbaar in **ouder**-weergaven, met de TFCD-tag (Tag For Child Directed treatment) ingesteld — zie `src/components.js` (`AdSlot`) en de instelling in de Instellingen-tab.
+Toekomstige uitzondering (nog niet actief): advertenties via Google AdMob ("Designed for Families"-gecertificeerd), alleen zichtbaar in **ouder**-weergaven, **niet-gepersonaliseerd** (`requestNonPersonalizedAdsOnly: true` in `src/AdSlot.js`) — nooit bij kinderen. Bij activeren route via het Families-advertentie-pool in Play Console.
+
+**Ouder-poorten:** account aanmaken / gezin koppelen (`FamilySetup`) is afgeschermd met een ouder-poort (typ "OUDER") — een kind kan niet zomaar een e-mailadres/wachtwoord invoeren. Ook reset, sign-out, QR-delen, feedback en store-review zijn ouder-only.
 
 ## 3. Age gate
 
@@ -28,8 +30,8 @@ Bij het toevoegen van een kind (`AddKidModal`) wordt om een geboortedatum gevraa
 
 ## 4. Reclame — Child-Directed Treatment
 
-- Reclame komt **nooit** voor in kind-weergaven (afgedwongen in code: `showAds = role === "ouder" && !premiumUnlocked`, App.js).
-- Zodra een echt advertentienetwerk gekoppeld wordt, moet dat een door Google goedgekeurd "Designed for Families"-gecertificeerd netwerk zijn (bijv. AdMob), met de TFCD-tag ingesteld op alle aanvragen.
+- Reclame komt **nooit** voor bij kinderen tot 16 jaar (afgedwongen in code: `showAds = role === "ouder" && (M?.age == null || M.age >= 16) && !premiumUnlocked`, App.js).
+- Zodra een echt advertentienetwerk gekoppeld wordt: Google AdMob via het "Designed for Families"-gecertificeerde netwerk, **niet-gepersonaliseerd** op alle aanvragen, met doelgroep in Play Console inclusief kinderen (Families-advertentie-pool).
 - Niet-gepersonaliseerde advertenties in de EU (AVG/GDPR-vereiste).
 
 ## 5. Content & taalgebruik
@@ -39,7 +41,7 @@ Geen geweld, enge content, of expliciet taalgebruik — de hele app bestaat uit 
 ## 6. Techniek & bèta-testen
 
 - Managed Expo-project (geen eigen `/android`/`/ios`-mappen tot een EAS-build); versienummers via `app.json`: `expo.version`, `expo.ios.buildNumber`, `expo.android.versionCode` — ophogen bij elke store-inzending.
-- Voor een Android App Bundle (`.aab`) en een gesloten bèta-test (14-dagen-eis, min. 20 testers) is een EAS Build + een echt Google Play Console-account nodig — dat kan alleen de app-eigenaar zelf opzetten.
+- Voor een Android App Bundle (`.aab`) en een gesloten bèta-test (14-dagen-eis, min. 12 testers sinds dec. 2024) is een EAS Build + een echt Google Play Console-account nodig — dat kan alleen de app-eigenaar zelf opzetten.
 
 ## Nog te doen (vereist accounts die alleen de eigenaar kan aanmaken)
 

@@ -184,6 +184,8 @@ export default function App() {
   const [promoInput, setPromoInput] = useState("");
   const [giftModal, setGiftModal] = useState(false);
   const [premiumModal, setPremiumModal] = useState(false);
+  const [parentGate, setParentGate] = useState(false);
+  const [parentGateInput, setParentGateInput] = useState("");
   const [startupAdDismissed, setStartupAdDismissed] = useState(false); // alleen voor deze sessie
   const [tourStep, setTourStep] = useState(0);
   const [tourForced, setTourForced] = useState(false); // (i)-knop of "opnieuw bekijken" negeert tourSeen
@@ -731,6 +733,37 @@ export default function App() {
     </Modal>
   );
 
+  // Ouder-poort voor gevoelige acties vanaf het profiel-scherm (Families-policy): een
+  // kind moet niet zomaar het account-/betaal-scherm kunnen openen. Eenvoudige poort:
+  // typ het woord "OUDER" (een jong kind doet dat niet zomaar).
+  const submitParentGate = () => {
+    if (parentGateInput.trim().toUpperCase() === "OUDER") {
+      setParentGate(false); setParentGateInput(""); setFamilySetupOpen(true);
+    } else { alertX("Niet correct", "Typ het woord OUDER om door te gaan."); setParentGateInput(""); }
+  };
+  const parentGateModal = (
+    <Modal visible={parentGate} transparent animationType="fade"
+      onRequestClose={() => { setParentGate(false); setParentGateInput(""); }}>
+      <View style={{ flex: 1, backgroundColor: "rgba(10,5,25,0.55)", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <View style={{ backgroundColor: t.card, borderRadius: 24, padding: 24, width: "100%", maxWidth: 340 }}>
+          <Text style={{ fontSize: 32, textAlign: "center", marginBottom: 6 }}>🔒</Text>
+          <Text style={{ fontWeight: "900", fontSize: 18, color: t.ink, textAlign: "center", marginBottom: 6 }}>
+            Vraag even een ouder</Text>
+          <Text style={{ fontSize: 13, color: t.sub, textAlign: "center", marginBottom: 16 }}>
+            Een gezin-account aanmaken of koppelen is alleen voor een ouder. Typ het woord{" "}
+            <Text style={{ fontWeight: "800", color: t.ink }}>OUDER</Text> om door te gaan.</Text>
+          <TextInput style={inputStyle(t)} placeholder="Typ OUDER" placeholderTextColor={t.sub}
+            autoCapitalize="characters" value={parentGateInput} onChangeText={setParentGateInput} />
+          <View style={{ marginTop: 16 }}><Btn t={t} onPress={submitParentGate}>Door gaan</Btn></View>
+          <TouchableOpacity onPress={() => { setParentGate(false); setParentGateInput(""); }}
+            style={{ alignItems: "center", padding: 12 }}>
+            <Text style={{ color: t.sub, fontWeight: "700", fontSize: 13 }}>Annuleren</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
   // Externe bijdrage handmatig registreren nadat een ouder 'm echt heeft ontvangen.
   const receiveGift = (kidKey, cents, giver) => {
     setS(s => ({ ...s, balances: { ...s.balances, [kidKey]: (s.balances[kidKey] || 0) + cents } }));
@@ -1197,7 +1230,7 @@ export default function App() {
             </TouchableOpacity>
           ))}
           {fam.backendConfigured && !S.familyId && !familySetupDismissed ? (
-            <TouchableOpacity onPress={() => setFamilySetupOpen(true)} style={{ marginTop: 8, alignItems: "center" }}>
+            <TouchableOpacity onPress={() => setParentGate(true)} style={{ marginTop: 8, alignItems: "center" }}>
               <Text style={{ color: t.accent, fontWeight: "800", fontSize: 13.5 }}>
                 👨‍👩‍👧‍👦 Gezin aanmaken of koppelen met een code</Text>
             </TouchableOpacity>
@@ -1212,6 +1245,7 @@ export default function App() {
           </View>
         </ScrollView>
         {pinGateModal}
+        {parentGateModal}
         {premiumModalEl}
       </SafeAreaView>
     );
