@@ -2511,7 +2511,9 @@ export default function App() {
       <Card t={t}>
         <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>📮 Feedback & contact</Text>
         <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
-          Vraag, probleem, of goed idee? Stuur het ons — we lezen alles mee.</Text>
+          Heitje is een app <Text style={{ fontWeight: "700", color: t.ink }}>door ouders, voor ouders</Text>.
+          Vraag, probleem of goed idee? We ontvangen graag <Text style={{ fontWeight: "700", color: t.ink }}>gedetailleerde feedback</Text>,
+          zodat we de app nóg veiliger en handiger kunnen maken — we lezen alles.</Text>
         <Btn t={t} small kind="ghost" onPress={() => Linking.openURL(
           `mailto:heitjevooreenkarweitje@protonmail.com?subject=${encodeURIComponent("Feedback Heitje voor een karweitje (v" + APP_VERSION + ")")}`
         )}>✉️ Stuur feedback</Btn>
