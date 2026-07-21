@@ -91,8 +91,9 @@ There is no test suite yet. Verify changes by running in Expo Go.
    kid's own parent must approve each host up front; location = check-in/check-out
    moments only (no continuous tracking, visible only to the kid's own parents);
    DOUBLE approval (host + own parent); external earnings land in a separate
-   "extern verdiend" pot that a parent merges into the balance. Add-on €0.99/month
-   paid by the inviting family.
+   "extern verdiend" pot that a parent merges into the balance. Friends and family
+   18+ who join pay the same premium as the parents (€1/month or €9.99 eenmalig, the
+   same way) — no separate add-on price.
 
 ## Conventions
 
