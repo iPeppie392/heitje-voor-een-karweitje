@@ -28,10 +28,9 @@ const FREE_GOAL_LIMIT = 2;  // free tier: max spaardoelen per kind (premium: onb
 
 // Premium-tarieven (alleen voor de UI-weergave). Het definitieve bedrag én de echte
 // aankoop worden ingesteld in Google Play Console / App Store Connect (via RevenueCat),
-// gekoppeld zodra Heitje in de stores staat. NB: op de info-pagina staat € 9,99 eenmalig —
-// afstemmen vóór de lancering.
+// gekoppeld zodra Heitje in de stores staat. Gebruikers kiezen: €1/maand óf €9,99 eenmalig.
 const PREMIUM_PRICE_MONTHLY = "€ 1";   // per maand
-const PREMIUM_PRICE_ONCE = "€ 9,95";   // eenmalig
+const PREMIUM_PRICE_ONCE = "€ 9,99";   // eenmalig
 
 // Twee standaard spaardoelen die elk nieuw kind meteen krijgt: één gericht doel
 // ("Speelgoed", met winkellink-goedkeuring) en één open, algemeen doel ("Sparen",
