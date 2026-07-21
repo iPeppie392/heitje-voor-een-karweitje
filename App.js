@@ -393,7 +393,7 @@ export default function App() {
     return steps;
   }, [role, jr]);
   const showTour = !!me && S.tourEnabled && (tourForced || !S.tourSeen);
-  const showAds = role === "ouder" && !S.premiumUnlocked; // nooit bij kinderen (harde regel)
+  const showAds = role === "ouder" && (M?.age == null || M.age >= 16) && !S.premiumUnlocked; // nooit bij kinderen <16 (harde regel)
 
   // Uitgebreide, doorzoekbare uitleg — het ⓘ-knopje opent dit (los van de korte rondleiding).
   const HELP_TOPICS = useMemo(() => {
