@@ -5,3 +5,6 @@ web-build/
 *.log
 .DS_Store
 .env
+
+# Claude Code lokaal
+.claude/

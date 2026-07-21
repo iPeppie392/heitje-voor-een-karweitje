@@ -1,0 +1,32 @@
+# Automatische web-deploy: bij elke push naar main wordt de app gebouwd
+# (npx expo export --platform web) en op Vercel gezet (productie). De vaste
+# app-URL (heitje-voor-een-karweitje-five.vercel.app) wordt automatisch bijgewerkt.
+name: Deploy web
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # handmatig starten via de Actions-tab
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Installeer dependencies
+        run: npm install --no-audit --no-fund
+      - name: Bouw web-export
+        run: npx expo export --platform web
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      - name: Vercel-koppeling leggen in dist
+        run: |
+          mkdir -p dist/.vercel
+          printf '{"projectId":"%s","orgId":"%s","projectName":"heitje-voor-een-karweitje"}\n' \
+            "${{ secrets.VERCEL_PROJECT_ID }}" "${{ secrets.VERCEL_ORG_ID }}" > dist/.vercel/project.json
+      - name: Deploy naar Vercel (productie)
+        run: cd dist && npx --yes vercel deploy . --prod --yes --token=${{ secrets.VERCEL_TOKEN }}
