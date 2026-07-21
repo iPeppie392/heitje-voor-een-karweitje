@@ -55,7 +55,8 @@ export const AdSlot = ({ t, style }) => {
   return (
     <AdErrorBoundary fallback={placeholder}>
       <View style={[{ alignItems: "center" }, style]}>
-        <BannerAd unitId={AD_UNIT_ID} size={BannerAdSize.BANNER} onAdFailedToLoad={() => setFailed(true)} />
+        <BannerAd unitId={AD_UNIT_ID} size={BannerAdSize.BANNER} onAdFailedToLoad={() => setFailed(true)}
+          requestOptions={{ requestNonPersonalizedAdsOnly: true }} />
       </View>
     </AdErrorBoundary>
   );
