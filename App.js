@@ -26,6 +26,13 @@ import FamilySetup from "./src/screens/FamilySetup";
 const FREE_CHORE_LIMIT = 1; // free tier: max active chores (premium: unlimited)
 const FREE_GOAL_LIMIT = 2;  // free tier: max spaardoelen per kind (premium: onbeperkt) — standaard "Speelgoed" + "Sparen"
 
+// Premium-tarieven (alleen voor de UI-weergave). Het definitieve bedrag én de echte
+// aankoop worden ingesteld in Google Play Console / App Store Connect (via RevenueCat),
+// gekoppeld zodra Heitje in de stores staat. NB: op de info-pagina staat € 9,99 eenmalig —
+// afstemmen vóór de lancering.
+const PREMIUM_PRICE_MONTHLY = "€ 1";   // per maand
+const PREMIUM_PRICE_ONCE = "€ 9,95";   // eenmalig
+
 // Twee standaard spaardoelen die elk nieuw kind meteen krijgt: één gericht doel
 // ("Speelgoed", met winkellink-goedkeuring) en één open, algemeen doel ("Sparen",
 // altijd al goedgekeurd — er is geen link waar een ouder toestemming voor moet geven).
@@ -177,6 +184,7 @@ export default function App() {
   const [parentModal, setParentModal] = useState(false);
   const [promoInput, setPromoInput] = useState("");
   const [giftModal, setGiftModal] = useState(false);
+  const [premiumModal, setPremiumModal] = useState(false);
   const [startupAdDismissed, setStartupAdDismissed] = useState(false); // alleen voor deze sessie
   const [tourStep, setTourStep] = useState(0);
   const [tourForced, setTourForced] = useState(false); // (i)-knop of "opnieuw bekijken" negeert tourSeen
@@ -660,6 +668,70 @@ export default function App() {
     } catch { alertX("Dat ging niet goed", "Probeer het nog eens."); }
   };
 
+  // Premium-kopen (STUB — géén echte betaling). De echte aankoop loopt via Google Play /
+  // App Store (RevenueCat), gekoppeld zodra Heitje in de stores staat. Na een geldige aankoop:
+  // patch({ premiumUnlocked: true }) → alle reclame verdwijnt direct (zie showAds).
+  const purchasePremium = (plan) => {
+    alertX(
+      "Betaling via de stores",
+      "Aankopen lopen via Google Play en de App Store — beschikbaar zodra Heitje in de stores staat.\n\nWil je nu al reclamevrij? Gebruik een gratis premium-code."
+    );
+  };
+
+  // Premium-scherm: glimmende kop + twee opties (maandelijks / eenmalig) + gratis code.
+  const premiumModalEl = (
+    <Modal visible={premiumModal} transparent animationType="slide" onRequestClose={() => setPremiumModal(false)}>
+      <View style={{ flex: 1, backgroundColor: "rgba(10,5,25,0.6)", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <View style={{ backgroundColor: t.card, borderRadius: 28, padding: 22, width: "100%", maxWidth: 360 }}>
+          <View style={{ alignItems: "center", marginBottom: 16 }}>
+            <Text style={{ fontSize: 44 }}>💎</Text>
+            <Text style={{ fontWeight: "900", fontSize: 22, color: t.ink, marginTop: 2 }}>Premium</Text>
+            <Text style={{ fontSize: 13, color: t.sub, textAlign: "center", marginTop: 4 }}>
+              Reclamevrij én onbeperkt klusjes en doelen, voor het hele gezin.</Text>
+          </View>
+
+          <TouchableOpacity onPress={() => purchasePremium("monthly")} activeOpacity={0.85}
+            style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+              backgroundColor: t.soft, borderRadius: 18, padding: 16, marginBottom: 10,
+              borderWidth: 2, borderColor: t.accent }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: "900", fontSize: 15, color: t.ink }}>Maandelijks</Text>
+              <Text style={{ fontSize: 12, color: t.sub, marginTop: 2 }}>Opzegbaar wanneer je wilt</Text>
+            </View>
+            <Text style={{ fontWeight: "900", fontSize: 20, color: t.accent }}>
+              {PREMIUM_PRICE_MONTHLY}<Text style={{ fontSize: 12, color: t.sub }}> /mnd</Text>
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => purchasePremium("once")} activeOpacity={0.85}
+            style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+              backgroundColor: t.soft, borderRadius: 18, padding: 16, marginBottom: 12,
+              borderWidth: 1, borderColor: t.line }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: "900", fontSize: 15, color: t.ink }}>Eenmalig</Text>
+              <Text style={{ fontSize: 12, color: t.sub, marginTop: 2 }}>Eén keer betalen</Text>
+            </View>
+            <Text style={{ fontWeight: "900", fontSize: 20, color: t.ink }}>{PREMIUM_PRICE_ONCE}</Text>
+          </TouchableOpacity>
+
+          <Text style={{ fontSize: 11, color: t.sub, textAlign: "center", marginBottom: 14, lineHeight: 16 }}>
+            Betaling verloopt veilig via Google Play en de App Store — beschikbaar zodra Heitje in de stores staat.</Text>
+
+          <View style={{ borderTopWidth: 1, borderTopColor: t.line, paddingTop: 14 }}>
+            <Text style={{ fontSize: 12, color: t.sub, marginBottom: 8 }}>Heb je een gratis code? Vul die hier in.</Text>
+            <TextInput style={inputStyle(t)} placeholder="Code" placeholderTextColor={t.sub} autoCapitalize="characters"
+              value={promoInput} onChangeText={setPromoInput} />
+            <View style={{ marginTop: 10 }}><Btn t={t} small onPress={redeemPromo}>Code inwisselen</Btn></View>
+          </View>
+
+          <TouchableOpacity onPress={() => setPremiumModal(false)} style={{ alignItems: "center", padding: 12, marginTop: 4 }}>
+            <Text style={{ color: t.sub, fontWeight: "700", fontSize: 13 }}>Sluiten</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
   // Externe bijdrage handmatig registreren nadat een ouder 'm echt heeft ontvangen.
   const receiveGift = (kidKey, cents, giver) => {
     setS(s => ({ ...s, balances: { ...s.balances, [kidKey]: (s.balances[kidKey] || 0) + cents } }));
@@ -1141,6 +1213,7 @@ export default function App() {
           </View>
         </ScrollView>
         {pinGateModal}
+        {premiumModalEl}
       </SafeAreaView>
     );
   }
@@ -2387,17 +2460,18 @@ export default function App() {
       ) : null}
 
       <Card t={t} style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 4 }}>✨ Premium</Text>
+        <Text style={{ fontWeight: "700", fontSize: 14, color: t.ink, marginBottom: 10 }}>✨ Premium</Text>
         {S.premiumUnlocked ? (
-          <Text style={{ fontSize: 13, color: t.green, fontWeight: "700" }}>Premium is actief voor jullie gezin. Onbeperkt klusjes!</Text>
+          <Text style={{ fontSize: 13, color: t.green, fontWeight: "700" }}>Premium is actief voor jullie gezin. Onbeperkt klusjes en reclamevrij!</Text>
         ) : (
-          <>
-            <Text style={{ fontSize: 12, color: t.sub, marginBottom: 10 }}>
-              Heb je een gratis code gekregen? Vul die hier in.</Text>
-            <TextInput style={inputStyle(t)} placeholder="Code" placeholderTextColor={t.sub} autoCapitalize="characters"
-              value={promoInput} onChangeText={setPromoInput} />
-            <Btn t={t} small onPress={redeemPromo}>Code inwisselen</Btn>
-          </>
+          <TouchableOpacity onPress={() => setPremiumModal(true)} activeOpacity={0.9}
+            style={{ backgroundColor: t.accent, borderRadius: 18, padding: 16, alignItems: "center",
+              shadowColor: t.accent, shadowOpacity: 0.45, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 6 }}>
+            <Text style={{ fontSize: 26, marginBottom: 2 }}>💎</Text>
+            <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>Premium — reclamevrij</Text>
+            <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 12, marginTop: 2 }}>
+              {PREMIUM_PRICE_MONTHLY}/mnd of {PREMIUM_PRICE_ONCE} eenmalig</Text>
+          </TouchableOpacity>
         )}
       </Card>
 
