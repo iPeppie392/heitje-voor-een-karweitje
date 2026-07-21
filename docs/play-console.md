@@ -35,7 +35,7 @@ Build-config staat klaar (`eas.json` production-profiel + `app.json`: package
 
 ## 3. Data Safety-formulier — antwoorden
 Verzamelde gegevens (alles versleuteld via HTTPS/Supabase EU-Frankfurt; verwijderen op
-verzoek via peppie392@gmail.com):
+verzoek via heitjevooreenkarweitje@protonmail.com):
 | Gegeven | Doel | Verplicht |
 |---|---|---|
 | E-mailadres (ouder) | Account/aanmelden | ja |
