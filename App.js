@@ -28,9 +28,9 @@ const FREE_GOAL_LIMIT = 2;  // free tier: max spaardoelen per kind (premium: onb
 
 // Premium-tarieven (alleen voor de UI-weergave). Het definitieve bedrag én de echte
 // aankoop worden ingesteld in Google Play Console / App Store Connect (via RevenueCat),
-// gekoppeld zodra Heitje in de stores staat. Gebruikers kiezen: €1/maand óf €9,99 eenmalig.
+// gekoppeld zodra Heitje in de stores staat. Gebruikers kiezen: €1/maand óf €9,99/jaar.
 const PREMIUM_PRICE_MONTHLY = "€ 1";   // per maand
-const PREMIUM_PRICE_ONCE = "€ 9,99";   // eenmalig
+const PREMIUM_PRICE_YEAR = "€ 9,99";   // per jaar (jaarabonnement)
 
 // Twee standaard spaardoelen die elk nieuw kind meteen krijgt: één gericht doel
 // ("Speelgoed", met winkellink-goedkeuring) en één open, algemeen doel ("Sparen",
@@ -677,7 +677,7 @@ export default function App() {
     );
   };
 
-  // Premium-scherm: glimmende kop + twee opties (maandelijks / eenmalig) + gratis code.
+  // Premium-scherm: glimmende kop + twee opties (maandelijks / per jaar) + gratis code.
   const premiumModalEl = (
     <Modal visible={premiumModal} transparent animationType="slide" onRequestClose={() => setPremiumModal(false)}>
       <View style={{ flex: 1, backgroundColor: "rgba(10,5,25,0.6)", alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -702,15 +702,15 @@ export default function App() {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => purchasePremium("once")} activeOpacity={0.85}
+          <TouchableOpacity onPress={() => purchasePremium("year")} activeOpacity={0.85}
             style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between",
               backgroundColor: t.soft, borderRadius: 18, padding: 16, marginBottom: 12,
               borderWidth: 1, borderColor: t.line }}>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontWeight: "900", fontSize: 15, color: t.ink }}>Eenmalig</Text>
-              <Text style={{ fontSize: 12, color: t.sub, marginTop: 2 }}>Eén keer betalen</Text>
+              <Text style={{ fontWeight: "900", fontSize: 15, color: t.ink }}>Per jaar</Text>
+              <Text style={{ fontSize: 12, color: t.sub, marginTop: 2 }}>Jaarabonnement — voordeliger</Text>
             </View>
-            <Text style={{ fontWeight: "900", fontSize: 20, color: t.ink }}>{PREMIUM_PRICE_ONCE}</Text>
+            <Text style={{ fontWeight: "900", fontSize: 20, color: t.ink }}>{PREMIUM_PRICE_YEAR}<Text style={{ fontSize: 12, color: t.sub }}> /jaar</Text></Text>
           </TouchableOpacity>
 
           <Text style={{ fontSize: 11, color: t.sub, textAlign: "center", marginBottom: 14, lineHeight: 16 }}>
@@ -1860,7 +1860,7 @@ export default function App() {
       {role === "ouder" ? (
         <Btn t={t} kind="ghost" onPress={() => {
           if (!S.premiumUnlocked && active.length >= FREE_CHORE_LIMIT) {
-            alertX("Premium ✨", `Gratis: max ${FREE_CHORE_LIMIT} actieve klusjes. Onbeperkt + wekelijks herhalen = Premium (€ 0,99/mnd).`);
+            alertX("Premium ✨", `Gratis: max ${FREE_CHORE_LIMIT} actieve klusjes. Onbeperkt + wekelijks herhalen = Premium (€1/mnd).`);
           } else setChoreModal(true);
         }}>＋ Nieuw klusje in de pool</Btn>
       ) : null}
@@ -1920,7 +1920,7 @@ export default function App() {
             </Card>
           ) : (
             <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
-              onPress={() => alertX("Premium ✨", "Een 3e of 4e geld-spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
+              onPress={() => alertX("Premium ✨", "Een 3e of 4e geld-spaardoel? Dat kan met Premium (€1/mnd) — vraag papa of mama!")}>
               <Text style={{ fontSize: 24 }}>🔒</Text>
               <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Nog een geld-spaardoel</Text>
               <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: {FREE_GOAL_LIMIT} geld-doelen · meer met Premium</Text>
@@ -1928,7 +1928,7 @@ export default function App() {
           )}
           {showScreenSection && S.screenGoals[me] ? (
             <Card t={t} style={{ marginBottom: 14, alignItems: "center", borderStyle: "dashed" }}
-              onPress={() => alertX("Premium ✨", "Tweede schermtijd-spaardoel? Dat kan met Premium (€ 0,99/mnd) — vraag papa of mama!")}>
+              onPress={() => alertX("Premium ✨", "Tweede schermtijd-spaardoel? Dat kan met Premium (€1/mnd) — vraag papa of mama!")}>
               <Text style={{ fontSize: 24 }}>🔒</Text>
               <Text style={{ fontWeight: "800", color: t.ink, fontSize: 15 }}>＋ Tweede schermtijd-spaardoel</Text>
               <Text style={{ fontSize: 13, color: t.sub, marginTop: 2 }}>Gratis: 1 schermtijd-doel · meer met Premium</Text>
@@ -2469,7 +2469,7 @@ export default function App() {
             <Text style={{ fontSize: 26, marginBottom: 2 }}>💎</Text>
             <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>Premium — reclamevrij</Text>
             <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 12, marginTop: 2 }}>
-              {PREMIUM_PRICE_MONTHLY}/mnd of {PREMIUM_PRICE_ONCE} eenmalig</Text>
+              {PREMIUM_PRICE_MONTHLY}/mnd of {PREMIUM_PRICE_YEAR}/jaar</Text>
           </TouchableOpacity>
         )}
       </Card>
@@ -2882,9 +2882,9 @@ function PricingIntro({ t, onContinue }) {
       <Row icon="🧒" title="Kinderen: altijd gratis, nooit reclame"
         body="Een kindprofiel ziet nooit advertenties en heeft nooit kosten — geen uitzondering, geen instelling die dit ooit kan veranderen." />
       <Row icon="👨‍👩‍👧" title="Ouders: gratis met reclame, of reclamevrij"
-        body="Als ouder zie je af en toe een klein, duidelijk gemarkeerd advertentieblokje. Reclame helemaal weg kan voor € 0,99 per maand, of eenmalig € 9,99. (Binnenkort beschikbaar in de app.)" />
+        body="Als ouder zie je af en toe een klein, duidelijk gemarkeerd advertentieblokje. Reclame helemaal weg kan voor € 1 per maand, of € 9,99 per jaar. (Binnenkort beschikbaar in de app.)" />
       <Row icon="🧓" title="Gasten van buitenaf: zelfde principe"
-        body="Opa, oma, een oom/tante of vriend die als gast een klusje voorstelt, ziet ook af en toe reclame — of kiest voor reclamevrij voor € 0,99 per maand. (Binnenkort beschikbaar.)" />
+        body="Opa, oma, een oom/tante of vriend die als gast een klusje voorstelt, ziet ook af en toe reclame — of kiest voor reclamevrij voor € 1 per maand. (Binnenkort beschikbaar.)" />
 
       <View style={{ marginTop: 12, marginBottom: 24 }}>
         <Btn t={t} onPress={onContinue}>Begrepen, verder →</Btn>
