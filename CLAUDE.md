@@ -63,8 +63,10 @@ There is no test suite yet. Verify changes by running in Expo Go.
    (this is the parental gate). Goal reached = confetti + feed post + parent alert.
 5. **Privacy**: no kid e-mail accounts, no tracking, no ads in kid views, photos stay in
    the family. Feed is chronological only — never add recommendation logic.
-6. **Free-tier limits** (premium upsell points): max 5 active chores, 1 savings goal per
-   kid, 10 proof photos/week. Premium: €0.99/month or €9.99 lifetime (via RevenueCat, later).
+6. **Free-tier limits** (premium upsell points): max 1 active chore, 2 savings goals per
+   kid (no photo cap in code). Premium: €1/month or €9.99 eenmalig (one-time), via RevenueCat
+   at store launch — **no lifetime option**. Ads show only to adults (role `ouder`, age unknown
+   or ≥16); never to under-16s or kids.
 7. **Parents are equals**: every parent can approve, manage, and register payouts.
 9. **Login / auto-login**: no real accounts yet. The welcome screen is the profile picker; the
    chosen profile is stored in `S.lastMe` and the app auto-opens to it on next launch (local,
