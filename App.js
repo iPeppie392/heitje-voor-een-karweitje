@@ -1230,7 +1230,7 @@ export default function App() {
             </TouchableOpacity>
           ))}
           {fam.backendConfigured && !S.familyId && !familySetupDismissed ? (
-            <TouchableOpacity onPress={() => setParentGate(true)} style={{ marginTop: 8, alignItems: "center" }}>
+            <TouchableOpacity onPress={() => setParentGate(true)} accessibilityRole="button" accessibilityLabel="Gezin aanmaken of koppelen — ouder-poort" style={{ marginTop: 8, alignItems: "center" }}>
               <Text style={{ color: t.accent, fontWeight: "800", fontSize: 13.5 }}>
                 👨‍👩‍👧‍👦 Gezin aanmaken of koppelen met een code</Text>
             </TouchableOpacity>
@@ -2497,7 +2497,7 @@ export default function App() {
         {S.premiumUnlocked ? (
           <Text style={{ fontSize: 13, color: t.green, fontWeight: "700" }}>Premium is actief voor jullie gezin. Onbeperkt klusjes en reclamevrij!</Text>
         ) : (
-          <TouchableOpacity onPress={() => setPremiumModal(true)} activeOpacity={0.9}
+          <TouchableOpacity onPress={() => setPremiumModal(true)} activeOpacity={0.9} accessibilityRole="button" accessibilityLabel="Premium — reclamevrij"
             style={{ backgroundColor: t.accent, borderRadius: 18, padding: 16, alignItems: "center",
               shadowColor: t.accent, shadowOpacity: 0.45, shadowRadius: 14, shadowOffset: { width: 0, height: 4 }, elevation: 6 }}>
             <Text style={{ fontSize: 26, marginBottom: 2 }}>💎</Text>
